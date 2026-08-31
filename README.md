@@ -21,7 +21,8 @@ Built on the [Light SDK](https://github.com/lightphone/light-sdk).
 
 ---
 
-## Local setup
+<details>
+<summary>Local setup</summary>
 
 This module isn't a standalone Gradle build. It compiles as a subproject of a local `light-sdk`
 checkout, the same way other local Light SDK tools do.
@@ -38,6 +39,8 @@ Then from inside the `light-sdk` checkout:
 ```bash
 ./gradlew :measure:compileDebugKotlin
 ```
+
+</details>
 
 ---
 
