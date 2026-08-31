@@ -1,6 +1,7 @@
 package com.zacksimpson.measure.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -27,11 +29,12 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.designVerticalPxToSp
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import com.zacksimpson.measure.MainScreen
+import com.zacksimpson.measure.data.CalcHistoryRepository
 import kotlin.math.abs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 // same grid, spacing, and type scale as MainScreen (copied rather than shared, see
 // measure-tool's own notes on that choice), with "/" swapping in for "." and the
@@ -63,15 +66,50 @@ enum class Operator {
     }.reduced()
 }
 
-private fun parseFraction(text: String): Fraction {
-    val negative = text.startsWith("-")
-    val parts = text.removePrefix("-").split("/")
+// entry is always in inches, with an optional leading feet part: a plain integer
+// ("12"), a simple fraction ("3/4"), a mixed number ("12,3/4", "," marking the
+// whole/numerator boundary, see inputMixedSeparator), any of those prefixed with
+// feet ("3'"), or "'" alone. all arithmetic happens in total inches.
+private fun parseInchesFraction(text: String): Fraction {
+    val commaIndex = text.indexOf(",")
+    val whole = if (commaIndex >= 0) text.substring(0, commaIndex).toLongOrNull() ?: 0L else 0L
+    val fractionPart = if (commaIndex >= 0) text.substring(commaIndex + 1) else text
+    val parts = fractionPart.split("/")
     val numerator = parts.getOrNull(0)?.toLongOrNull() ?: 0L
     val denominator = parts.getOrNull(1)?.toLongOrNull()?.takeIf { it != 0L } ?: 1L
-    return Fraction(if (negative) -numerator else numerator, denominator)
+    return Fraction(whole * denominator + numerator, denominator)
 }
 
-class FractionCalcScreenViewModel : LightViewModel<Unit>() {
+private fun parseFraction(text: String): Fraction {
+    val negative = text.startsWith("-")
+    val body = text.removePrefix("-")
+    val feetIndex = body.indexOf("'")
+    val feet = if (feetIndex >= 0) body.substring(0, feetIndex).toLongOrNull() ?: 0L else 0L
+    val inches = parseInchesFraction(if (feetIndex >= 0) body.substring(feetIndex + 1) else body)
+    val totalNumerator = feet * 12 * inches.denominator + inches.numerator
+    return Fraction(if (negative) -totalNumerator else totalNumerator, inches.denominator)
+}
+
+// an empty (or "0") whole part is never meaningful (0 wholes + a fraction is just the
+// fraction), so drop it from what's shown while typing: "0,3/4" and "3',3/4" both
+// read as clean "3/4" / "3'3/4" instead of a stray leading/trailing "-".
+private fun renderEntryDisplay(raw: String): String {
+    val sign = if (raw.startsWith("-")) "-" else ""
+    val body = raw.removePrefix(sign)
+    val commaIndex = body.indexOf(",")
+    val withoutEmptyWhole = if (commaIndex < 0) {
+        body
+    } else {
+        val feetIndex = body.indexOf("'")
+        val wholeStart = if (feetIndex in 0 until commaIndex) feetIndex + 1 else 0
+        val whole = body.substring(wholeStart, commaIndex)
+        if (whole.isEmpty() || whole == "0") body.removeRange(wholeStart, commaIndex + 1) else body
+    }
+    val rendered = sign + withoutEmptyWhole.replace(",", "-")
+    return if (rendered.isEmpty() || rendered == "-") "0" else rendered
+}
+
+class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository) : LightViewModel<Unit>() {
 
     private var accumulator: Fraction? = null
     private var pendingOperator: Operator? = null
@@ -100,6 +138,34 @@ class FractionCalcScreenViewModel : LightViewModel<Unit>() {
         if (_display.value.length >= MAX_DISPLAY_LENGTH) return
         if (!_display.value.contains("/")) {
             _display.value += "/"
+        }
+    }
+
+    // "fra": marks the boundary between the whole number and the numerator,
+    // e.g. "12" + fra + "3" + "/" + "4" builds "12,3/4" (twelve and three quarters).
+    fun inputMixedSeparator() {
+        if (startingNewEntry) {
+            _display.value = "0,"
+            startingNewEntry = false
+            return
+        }
+        if (_display.value.length >= MAX_DISPLAY_LENGTH) return
+        if (!_display.value.contains(",") && !_display.value.contains("/")) {
+            _display.value += ","
+        }
+    }
+
+    // "ft": marks the boundary between feet and inches, must come before any
+    // fraction markers, e.g. "3" + ft + "4" + fra + "1" + "/" + "2" builds "3'4,1/2".
+    fun inputFeetMarker() {
+        if (startingNewEntry) {
+            _display.value = "0'"
+            startingNewEntry = false
+            return
+        }
+        if (_display.value.length >= MAX_DISPLAY_LENGTH) return
+        if (!_display.value.contains("'") && !_display.value.contains(",") && !_display.value.contains("/")) {
+            _display.value += "'"
         }
     }
 
@@ -148,19 +214,30 @@ class FractionCalcScreenViewModel : LightViewModel<Unit>() {
         accumulator = null
         pendingOperator = null
         startingNewEntry = true
+        if (_display.value != "Error") {
+            viewModelScope.launch { historyRepo.record(_display.value) }
+        }
     }
 
+    // fraction is total inches. folds into feet once >= 12 and always ends in a
+    // unit mark ("'" for a bare feet result, otherwise the inches mark """)
+    // so it's never ambiguous which unit a result is in.
     private fun formatValue(fraction: Fraction): String {
         val reduced = fraction.reduced()
         if (reduced.denominator == 0L) return "Error"
 
         val sign = if (reduced.numerator < 0) "-" else ""
-        val whole = abs(reduced.numerator) / reduced.denominator
+        val totalWhole = abs(reduced.numerator) / reduced.denominator
         val remainder = abs(reduced.numerator) % reduced.denominator
+        val feet = totalWhole / 12
+        val inchesWhole = if (feet > 0) totalWhole % 12 else totalWhole
+        val feetPrefix = if (feet > 0) "$feet'" else ""
+
         val result = when {
-            remainder == 0L -> "$sign$whole"
-            whole == 0L -> "$sign$remainder/${reduced.denominator}"
-            else -> "$sign$whole-$remainder/${reduced.denominator}"
+            remainder == 0L && inchesWhole == 0L && feet > 0 -> "$sign$feetPrefix"
+            remainder == 0L -> "$sign$feetPrefix$inchesWhole\""
+            inchesWhole == 0L -> "$sign$feetPrefix$remainder/${reduced.denominator}\""
+            else -> "$sign$feetPrefix$inchesWhole-$remainder/${reduced.denominator}\""
         }
         return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
     }
@@ -172,7 +249,8 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<FractionCalcScreenViewModel>
         get() = FractionCalcScreenViewModel::class.java
 
-    override fun createViewModel(): FractionCalcScreenViewModel = FractionCalcScreenViewModel()
+    override fun createViewModel(): FractionCalcScreenViewModel =
+        FractionCalcScreenViewModel(CalcHistoryRepository(lightContext.dataStore))
 
     @Composable
     override fun Content() {
@@ -186,15 +264,18 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
                     .background(LightThemeTokens.colors.background),
             ) {
                 DisplayRow(
-                    value = display,
+                    value = renderEntryDisplay(display),
                     onBackspace = viewModel::backspace,
+                    onLongPress = {
+                        navigateTo(screenFactory = { ResultActionsScreen(it, renderEntryDisplay(display)) })
+                    },
                     modifier = Modifier.weight(1f),
                 )
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
                         FractionCalcButton.Label("C", onClick = viewModel::clear),
-                        null,
+                        FractionCalcButton.Label("ft", scale = 0.7f, onClick = viewModel::inputFeetMarker),
                         FractionCalcButton.Label("±", onClick = viewModel::toggleSign),
                         FractionCalcButton.Label("÷") { viewModel.setOperator(Operator.DIVIDE) },
                     ),
@@ -226,12 +307,20 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
                         FractionCalcButton.Label("+") { viewModel.setOperator(Operator.ADD) },
                     ),
                 )
+                // "fra"/"/" share one key: it reads "fra" until the whole/numerator
+                // marker has been placed, then relabels to "/" for the numerator/
+                // denominator split, then reverts once a new entry starts.
+                val fraSlashShowsSlash = display.contains(",")
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        FractionCalcButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
+                        FractionCalcButton.Icon(LightIcons.LIST, onClick = { openToolsMenu("fraction-calc") }),
                         FractionCalcButton.Label("0") { viewModel.inputDigit("0") },
-                        FractionCalcButton.Label("/", scale = 0.85f, onClick = viewModel::inputSlash),
+                        FractionCalcButton.Label(
+                            text = if (fraSlashShowsSlash) "/" else "fra",
+                            scale = if (fraSlashShowsSlash) 0.85f else 0.7f,
+                            onClick = if (fraSlashShowsSlash) viewModel::inputSlash else viewModel::inputMixedSeparator,
+                        ),
                         FractionCalcButton.Label("=", onClick = viewModel::equals),
                     ),
                 )
@@ -239,29 +328,6 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
         }
     }
 
-    private val toolOptions = listOf(
-        ViewOption("standard", "Standard"),
-        ViewOption("convert-units", "Convert Units"),
-        ViewOption("fraction-calc", "Fraction Calc"),
-        ViewOption("angle-find", "Angle Find"),
-    )
-
-    private fun openToolsMenu() {
-        navigateTo(
-            screenFactory = { OptionsScreen(it, toolOptions) },
-            resultCallback = { key ->
-                when (key) {
-                    "fraction-calc" -> Unit
-                    "standard" -> navigateTo(screenFactory = { MainScreen(it) })
-                    "convert-units" -> navigateTo(screenFactory = { ConvertUnitsScreen(it) })
-                    else -> {
-                        val label = toolOptions.first { it.key == key }.label
-                        navigateTo(screenFactory = { UnimplementedScreen(it, "$label: not built yet.") })
-                    }
-                }
-            },
-        )
-    }
 }
 
 private sealed interface FractionCalcButton {
@@ -286,7 +352,12 @@ private fun gridTextStyle(scale: Float = 1f): TextStyle {
 }
 
 @Composable
-private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifier = Modifier) {
+private fun DisplayRow(
+    value: String,
+    onBackspace: () -> Unit,
+    onLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -294,7 +365,9 @@ private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifie
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .combinedClickable(onClick = {}, onLongClick = onLongPress),
             contentAlignment = Alignment.CenterEnd,
         ) {
             Text(

@@ -1,6 +1,7 @@
 package com.zacksimpson.measure.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -28,11 +30,12 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.designVerticalPxToSp
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import com.zacksimpson.measure.MainScreen
+import com.zacksimpson.measure.data.CalcHistoryRepository
 import kotlin.math.abs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 // same grid, spacing, and type scale as MainScreen (copied, not shared, see
 // measure-tool's own notes on that choice). no arithmetic here, so the operator
@@ -48,7 +51,7 @@ enum class LengthUnit(val shortLabel: String, val fullName: String, val metersPe
     METER("m", "Meters", 1.0),
 }
 
-class ConvertUnitsScreenViewModel : LightViewModel<Unit>() {
+class ConvertUnitsScreenViewModel(private val historyRepo: CalcHistoryRepository) : LightViewModel<Unit>() {
 
     private var startingNewEntry = true
 
@@ -118,6 +121,9 @@ class ConvertUnitsScreenViewModel : LightViewModel<Unit>() {
         val meters = value * _fromUnit.value.metersPerUnit
         _display.value = formatValue(meters / _toUnit.value.metersPerUnit)
         startingNewEntry = true
+        if (_display.value != "Error") {
+            viewModelScope.launch { historyRepo.record(_display.value) }
+        }
     }
 
     private fun formatValue(value: Double): String {
@@ -145,7 +151,8 @@ class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<ConvertUnitsScreenViewModel>
         get() = ConvertUnitsScreenViewModel::class.java
 
-    override fun createViewModel(): ConvertUnitsScreenViewModel = ConvertUnitsScreenViewModel()
+    override fun createViewModel(): ConvertUnitsScreenViewModel =
+        ConvertUnitsScreenViewModel(CalcHistoryRepository(lightContext.dataStore))
 
     private val unitOptions = LengthUnit.entries.map { ViewOption(it.name, it.fullName) }
 
@@ -165,6 +172,7 @@ class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
                 DisplayRow(
                     value = display,
                     onBackspace = viewModel::backspace,
+                    onLongPress = { navigateTo(screenFactory = { ResultActionsScreen(it, display) }) },
                     modifier = Modifier.weight(1f),
                 )
                 CalculatorRow(
@@ -210,7 +218,7 @@ class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        ConvertUnitsButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
+                        ConvertUnitsButton.Icon(LightIcons.LIST, onClick = { openToolsMenu("convert-units") }),
                         ConvertUnitsButton.Label("0") { viewModel.inputDigit("0") },
                         ConvertUnitsButton.Label(".", onClick = viewModel::inputDecimal),
                         ConvertUnitsButton.Label("=", onClick = viewModel::convert),
@@ -234,29 +242,6 @@ class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
         )
     }
 
-    private val toolOptions = listOf(
-        ViewOption("standard", "Standard"),
-        ViewOption("convert-units", "Convert Units"),
-        ViewOption("fraction-calc", "Fraction Calc"),
-        ViewOption("angle-find", "Angle Find"),
-    )
-
-    private fun openToolsMenu() {
-        navigateTo(
-            screenFactory = { OptionsScreen(it, toolOptions) },
-            resultCallback = { key ->
-                when (key) {
-                    "convert-units" -> Unit
-                    "standard" -> navigateTo(screenFactory = { MainScreen(it) })
-                    "fraction-calc" -> navigateTo(screenFactory = { FractionCalcScreen(it) })
-                    else -> {
-                        val label = toolOptions.first { it.key == key }.label
-                        navigateTo(screenFactory = { UnimplementedScreen(it, "$label: not built yet.") })
-                    }
-                }
-            },
-        )
-    }
 }
 
 private sealed interface ConvertUnitsButton {
@@ -285,7 +270,12 @@ private fun gridTextStyle(scale: Float = 1f): TextStyle {
 }
 
 @Composable
-private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifier = Modifier) {
+private fun DisplayRow(
+    value: String,
+    onBackspace: () -> Unit,
+    onLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -293,7 +283,9 @@ private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifie
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .combinedClickable(onClick = {}, onLongClick = onLongPress),
             contentAlignment = Alignment.CenterEnd,
         ) {
             Text(

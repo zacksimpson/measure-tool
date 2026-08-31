@@ -1,6 +1,7 @@
 package com.zacksimpson.measure
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -28,15 +30,14 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.designVerticalPxToSp
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import com.zacksimpson.measure.screens.ConvertUnitsScreen
-import com.zacksimpson.measure.screens.FractionCalcScreen
-import com.zacksimpson.measure.screens.OptionsScreen
-import com.zacksimpson.measure.screens.UnimplementedScreen
-import com.zacksimpson.measure.screens.ViewOption
+import com.zacksimpson.measure.data.CalcHistoryRepository
+import com.zacksimpson.measure.screens.ResultActionsScreen
+import com.zacksimpson.measure.screens.openToolsMenu
 import kotlin.math.abs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 // max characters (digits, sign, decimal point) the display will show before
 // switching to exponent notation, so a number can never overflow or wrap.
@@ -56,7 +57,7 @@ enum class Operator {
     }
 }
 
-class MainScreenViewModel : LightViewModel<Unit>() {
+class MainScreenViewModel(private val historyRepo: CalcHistoryRepository) : LightViewModel<Unit>() {
 
     private var accumulator: Double? = null
     private var pendingOperator: Operator? = null
@@ -133,6 +134,9 @@ class MainScreenViewModel : LightViewModel<Unit>() {
         accumulator = null
         pendingOperator = null
         startingNewEntry = true
+        if (_display.value != "Error") {
+            viewModelScope.launch { historyRepo.record(_display.value) }
+        }
     }
 
     private fun formatValue(value: Double): String {
@@ -161,7 +165,8 @@ class MainScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<MainScreenViewModel>
         get() = MainScreenViewModel::class.java
 
-    override fun createViewModel(): MainScreenViewModel = MainScreenViewModel()
+    override fun createViewModel(): MainScreenViewModel =
+        MainScreenViewModel(CalcHistoryRepository(lightContext.dataStore))
 
     @Composable
     override fun Content() {
@@ -177,6 +182,7 @@ class MainScreen(sealedActivity: SealedLightActivity) :
                 DisplayRow(
                     value = display,
                     onBackspace = viewModel::backspace,
+                    onLongPress = { navigateTo(screenFactory = { ResultActionsScreen(it, display) }) },
                     modifier = Modifier.weight(1f),
                 )
                 CalculatorRow(
@@ -218,7 +224,7 @@ class MainScreen(sealedActivity: SealedLightActivity) :
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
+                        CalculatorButton.Icon(LightIcons.LIST, onClick = { openToolsMenu("standard") }),
                         CalculatorButton.Label("0") { viewModel.inputDigit("0") },
                         CalculatorButton.Label(".", viewModel::inputDecimal),
                         CalculatorButton.Label("=", viewModel::equals),
@@ -228,29 +234,6 @@ class MainScreen(sealedActivity: SealedLightActivity) :
         }
     }
 
-    private val toolOptions = listOf(
-        ViewOption("standard", "Standard"),
-        ViewOption("convert-units", "Convert Units"),
-        ViewOption("fraction-calc", "Fraction Calc"),
-        ViewOption("angle-find", "Angle Find"),
-    )
-
-    private fun openToolsMenu() {
-        navigateTo(
-            screenFactory = { OptionsScreen(it, toolOptions) },
-            resultCallback = { key ->
-                when (key) {
-                    "standard" -> Unit
-                    "fraction-calc" -> navigateTo(screenFactory = { FractionCalcScreen(it) })
-                    "convert-units" -> navigateTo(screenFactory = { ConvertUnitsScreen(it) })
-                    else -> {
-                        val label = toolOptions.first { it.key == key }.label
-                        navigateTo(screenFactory = { UnimplementedScreen(it, "$label: not built yet.") })
-                    }
-                }
-            },
-        )
-    }
 }
 
 private sealed interface CalculatorButton {
@@ -277,7 +260,12 @@ private fun gridTextStyle(): TextStyle {
 }
 
 @Composable
-private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifier = Modifier) {
+private fun DisplayRow(
+    value: String,
+    onBackspace: () -> Unit,
+    onLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -287,7 +275,9 @@ private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifie
         // weighted, so the number's own box can never grow into the icon's space,
         // the icon below keeps a fixed size and position no matter what's here.
         Box(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .combinedClickable(onClick = {}, onLongClick = onLongPress),
             contentAlignment = Alignment.CenterEnd,
         ) {
             Text(
