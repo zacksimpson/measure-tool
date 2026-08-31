@@ -39,7 +39,7 @@ private const val PHYSICAL_Y_DPI = 321.387f
 // stop short of it on both ends instead of reserving a bottom bar's fixed height.
 private const val TOP_MARGIN_PX = 70f
 private const val BOTTOM_MARGIN_PX = 70f
-private const val LABEL_GAP_PX = 6f
+private const val LABEL_GAP_PX = 10f
 
 // no bottom bar here (it would eat into the ruler's length), so the LIST icon is
 // placed by hand at the exact spot the bar used to put a close icon, measured off
@@ -56,7 +56,7 @@ class RulerScreen(sealedActivity: SealedLightActivity) : SimpleLightScreen<Unit>
         val contentColor = LightThemeTokens.colors.content
         val pxPerMm = PHYSICAL_Y_DPI / 25.4f
         val pxPerSixteenth = PHYSICAL_Y_DPI / 16f
-        val labelTextSizePx = with(LocalDensity.current) { 13.sp.toPx() }
+        val labelTextSizePx = with(LocalDensity.current) { 22.sp.toPx() }
         val labelPaint = remember(contentColor, labelTextSizePx) {
             Paint().apply {
                 isAntiAlias = true
@@ -64,6 +64,10 @@ class RulerScreen(sealedActivity: SealedLightActivity) : SimpleLightScreen<Unit>
                 textSize = labelTextSizePx
             }
         }
+        // widest digit's width, so every label centers in the same slot instead
+        // of sitting flush against the tick, where a wide glyph like "0" reads as
+        // sticking out further than a narrow one like "1".
+        val digitSlotWidth = remember(labelPaint) { (0..9).maxOf { labelPaint.measureText(it.toString()) } }
 
         val density = LocalDensity.current
         val listIconSizePx = with(density) { LIST_ICON_SIZE_UNITS.gridUnitsAsDp().toPx() }
@@ -94,10 +98,12 @@ class RulerScreen(sealedActivity: SealedLightActivity) : SimpleLightScreen<Unit>
                         )
                         if (isCm) {
                             val label = (mm / 10).toString()
+                            val labelWidth = labelPaint.measureText(label)
+                            val slotCenter = length + LABEL_GAP_PX + digitSlotWidth / 2f
                             drawIntoCanvas { canvas ->
                                 canvas.nativeCanvas.drawText(
                                     label,
-                                    length + LABEL_GAP_PX,
+                                    slotCenter - labelWidth / 2f,
                                     y + labelPaint.textSize / 3f,
                                     labelPaint,
                                 )
@@ -130,10 +136,11 @@ class RulerScreen(sealedActivity: SealedLightActivity) : SimpleLightScreen<Unit>
                         if (isInch) {
                             val label = (sixteenth / 16).toString()
                             val labelWidth = labelPaint.measureText(label)
+                            val slotCenter = size.width - length - LABEL_GAP_PX - digitSlotWidth / 2f
                             drawIntoCanvas { canvas ->
                                 canvas.nativeCanvas.drawText(
                                     label,
-                                    size.width - length - LABEL_GAP_PX - labelWidth,
+                                    slotCenter - labelWidth / 2f,
                                     y + labelPaint.textSize / 3f,
                                     labelPaint,
                                 )
