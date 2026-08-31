@@ -13,6 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import com.thelightphone.sdk.LightScreen
@@ -170,8 +171,12 @@ class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
                         ConvertUnitsButton.Label("C", onClick = viewModel::clear),
-                        ConvertUnitsButton.Icon(LightIcons.REVERSE_ORDER, onClick = viewModel::swapUnits),
                         ConvertUnitsButton.Label(fromUnit.shortLabel, scale = 0.6f, onClick = ::openFromPicker),
+                        ConvertUnitsButton.Icon(
+                            LightIcons.REVERSE_ORDER,
+                            rotationDegrees = 90f,
+                            onClick = viewModel::swapUnits,
+                        ),
                         ConvertUnitsButton.Label(toUnit.shortLabel, scale = 0.6f, onClick = ::openToPicker),
                     ),
                 )
@@ -258,7 +263,11 @@ private sealed interface ConvertUnitsButton {
     val onClick: () -> Unit
 
     data class Label(val text: String, val scale: Float = 1f, override val onClick: () -> Unit) : ConvertUnitsButton
-    data class Icon(val icon: LightIconConfiguration, override val onClick: () -> Unit) : ConvertUnitsButton
+    data class Icon(
+        val icon: LightIconConfiguration,
+        val rotationDegrees: Float = 0f,
+        override val onClick: () -> Unit,
+    ) : ConvertUnitsButton
 }
 
 private val ButtonInset = 3.6f
@@ -332,6 +341,7 @@ private fun CalculatorRow(buttons: List<ConvertUnitsButton?>, modifier: Modifier
                         size = 1.7f,
                         modifier = Modifier
                             .padding(start = ButtonInset.gridUnitsAsDp())
+                            .rotate(button.rotationDegrees)
                             .lightClickable(onClick = button.onClick),
                     )
                 }
