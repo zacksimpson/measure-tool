@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -45,6 +46,7 @@ class OptionsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(LightThemeTokens.colors.background),
+                scrollBarPosition = LightScrollBarPosition.Inside,
             ) {
                 Spacer(modifier = Modifier.height(TopPadding.gridUnitsAsDp()))
                 options.forEachIndexed { index, option ->
