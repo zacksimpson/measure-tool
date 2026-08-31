@@ -24,9 +24,25 @@ import com.thelightphone.sdk.ui.lightClickable
 
 data class ViewOption(val key: String, val label: String)
 
-private const val TopPaddingUnits = 6.5f
-private const val BottomPaddingUnits = 4f
+// tuned for the 4-item tools menu, where this asymmetry is invisible (that list
+// never reaches the bottom of the screen either way). kept as-is only for short
+// lists; see topPaddingUnits/bottomPaddingUnits below for longer ones.
+private const val TunedTopPaddingUnits = 6.5f
+private const val TunedBottomPaddingUnits = 4f
 private const val MaxItemSpacingUnits = 2.25f
+
+// same total padding budget as the tuned values, just split evenly, so a list
+// long enough to actually reach the bottom of the screen gets a balanced gap
+// on both ends instead of the top/bottom asymmetry above.
+private const val BalancedPaddingUnits = (TunedTopPaddingUnits + TunedBottomPaddingUnits) / 2f
+
+private const val ShortListMaxCount = 4
+
+private fun topPaddingUnits(itemCount: Int): Float =
+    if (itemCount <= ShortListMaxCount) TunedTopPaddingUnits else BalancedPaddingUnits
+
+private fun bottomPaddingUnits(itemCount: Int): Float =
+    if (itemCount <= ShortListMaxCount) TunedBottomPaddingUnits else BalancedPaddingUnits
 
 // one Heading-variant line's rendered height in grid units, measured off-device
 // (step between item centers at the tuned 2.25-unit spacing was ~4.575 units,
@@ -41,7 +57,7 @@ private const val SafetyMarginUnits = 0.5f
 // resolution makes one width unit equal one height unit in px.
 private fun itemSpacingUnits(itemCount: Int): Float {
     if (itemCount <= 1) return MaxItemSpacingUnits
-    val budget = LightGrid.HEIGHT - TopPaddingUnits - BottomPaddingUnits - SafetyMarginUnits
+    val budget = LightGrid.HEIGHT - topPaddingUnits(itemCount) - bottomPaddingUnits(itemCount) - SafetyMarginUnits
     val fitSpacing = (budget - itemCount * ItemHeightUnits) / (itemCount - 1)
     return minOf(MaxItemSpacingUnits, fitSpacing)
 }
@@ -61,7 +77,10 @@ class OptionsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(LightThemeTokens.colors.background)
-                    .padding(top = TopPaddingUnits.gridUnitsAsDp(), bottom = BottomPaddingUnits.gridUnitsAsDp()),
+                    .padding(
+                        top = topPaddingUnits(options.size).gridUnitsAsDp(),
+                        bottom = bottomPaddingUnits(options.size).gridUnitsAsDp(),
+                    ),
                 verticalArrangement = Arrangement.spacedBy(itemSpacingUnits(options.size).gridUnitsAsDp()),
             ) {
                 options.forEach { option ->

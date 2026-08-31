@@ -171,8 +171,8 @@ class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
                     buttons = listOf(
                         ConvertUnitsButton.Label("C", onClick = viewModel::clear),
                         ConvertUnitsButton.Icon(LightIcons.REVERSE_ORDER, onClick = viewModel::swapUnits),
-                        ConvertUnitsButton.Label(fromUnit.shortLabel, onClick = ::openFromPicker),
-                        ConvertUnitsButton.Label(toUnit.shortLabel, onClick = ::openToPicker),
+                        ConvertUnitsButton.Label(fromUnit.shortLabel, scale = 0.6f, onClick = ::openFromPicker),
+                        ConvertUnitsButton.Label(toUnit.shortLabel, scale = 0.6f, onClick = ::openToPicker),
                     ),
                 )
                 CalculatorRow(
@@ -321,6 +321,8 @@ private fun CalculatorRow(buttons: List<ConvertUnitsButton?>, modifier: Modifier
                         text = button.text,
                         style = gridTextStyle(button.scale),
                         color = LightThemeTokens.colors.content,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
                         modifier = Modifier
                             .padding(start = ButtonInset.gridUnitsAsDp())
                             .lightClickable(onClick = button.onClick),
