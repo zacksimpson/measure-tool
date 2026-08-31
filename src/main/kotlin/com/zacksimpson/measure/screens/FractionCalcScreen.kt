@@ -1,4 +1,4 @@
-package com.zacksimpson.measure
+package com.zacksimpson.measure.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
-import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -28,18 +27,27 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.designVerticalPxToSp
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import com.zacksimpson.measure.screens.FractionCalcScreen
-import com.zacksimpson.measure.screens.OptionsScreen
-import com.zacksimpson.measure.screens.UnimplementedScreen
-import com.zacksimpson.measure.screens.ViewOption
+import com.zacksimpson.measure.MainScreen
 import kotlin.math.abs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-// max characters (digits, sign, decimal point) the display will show before
-// switching to exponent notation, so a number can never overflow or wrap.
+// same grid, spacing, and type scale as MainScreen (copied rather than shared, see
+// measure-tool's own notes on that choice), with "/" swapping in for "." and the
+// arithmetic operating on fractions instead of doubles.
 private const val MAX_DISPLAY_LENGTH = 10
+
+data class Fraction(val numerator: Long, val denominator: Long) {
+    fun reduced(): Fraction {
+        if (numerator == 0L) return Fraction(0, 1)
+        val g = gcd(abs(numerator), abs(denominator))
+        val sign = if (denominator < 0) -1 else 1
+        return Fraction(sign * numerator / g, sign * denominator / g)
+    }
+}
+
+private fun gcd(a: Long, b: Long): Long = if (b == 0L) a else gcd(b, a % b)
 
 enum class Operator {
     ADD,
@@ -47,17 +55,25 @@ enum class Operator {
     MULTIPLY,
     DIVIDE;
 
-    fun apply(a: Double, b: Double): Double = when (this) {
-        ADD -> a + b
-        SUBTRACT -> a - b
-        MULTIPLY -> a * b
-        DIVIDE -> a / b
-    }
+    fun apply(a: Fraction, b: Fraction): Fraction = when (this) {
+        ADD -> Fraction(a.numerator * b.denominator + b.numerator * a.denominator, a.denominator * b.denominator)
+        SUBTRACT -> Fraction(a.numerator * b.denominator - b.numerator * a.denominator, a.denominator * b.denominator)
+        MULTIPLY -> Fraction(a.numerator * b.numerator, a.denominator * b.denominator)
+        DIVIDE -> Fraction(a.numerator * b.denominator, a.denominator * b.numerator)
+    }.reduced()
 }
 
-class MainScreenViewModel : LightViewModel<Unit>() {
+private fun parseFraction(text: String): Fraction {
+    val negative = text.startsWith("-")
+    val parts = text.removePrefix("-").split("/")
+    val numerator = parts.getOrNull(0)?.toLongOrNull() ?: 0L
+    val denominator = parts.getOrNull(1)?.toLongOrNull()?.takeIf { it != 0L } ?: 1L
+    return Fraction(if (negative) -numerator else numerator, denominator)
+}
 
-    private var accumulator: Double? = null
+class FractionCalcScreenViewModel : LightViewModel<Unit>() {
+
+    private var accumulator: Fraction? = null
     private var pendingOperator: Operator? = null
     private var startingNewEntry = true
 
@@ -75,15 +91,15 @@ class MainScreenViewModel : LightViewModel<Unit>() {
         startingNewEntry = false
     }
 
-    fun inputDecimal() {
+    fun inputSlash() {
         if (startingNewEntry) {
-            _display.value = "0."
+            _display.value = "0/"
             startingNewEntry = false
             return
         }
         if (_display.value.length >= MAX_DISPLAY_LENGTH) return
-        if (!_display.value.contains(".")) {
-            _display.value += "."
+        if (!_display.value.contains("/")) {
+            _display.value += "/"
         }
     }
 
@@ -113,9 +129,9 @@ class MainScreenViewModel : LightViewModel<Unit>() {
     }
 
     fun setOperator(operator: Operator) {
-        val current = _display.value.toDoubleOrNull() ?: 0.0
+        val current = parseFraction(_display.value)
         accumulator = if (pendingOperator != null && !startingNewEntry) {
-            pendingOperator!!.apply(accumulator ?: 0.0, current)
+            pendingOperator!!.apply(accumulator ?: Fraction(0, 1), current)
         } else {
             accumulator ?: current
         }
@@ -126,41 +142,37 @@ class MainScreenViewModel : LightViewModel<Unit>() {
 
     fun equals() {
         val operator = pendingOperator ?: return
-        val current = _display.value.toDoubleOrNull() ?: 0.0
-        val result = operator.apply(accumulator ?: 0.0, current)
+        val current = parseFraction(_display.value)
+        val result = operator.apply(accumulator ?: Fraction(0, 1), current)
         _display.value = formatValue(result)
         accumulator = null
         pendingOperator = null
         startingNewEntry = true
     }
 
-    private fun formatValue(value: Double): String {
-        if (value.isNaN() || value.isInfinite()) return "Error"
-        if (value == 0.0) return "0"
+    private fun formatValue(fraction: Fraction): String {
+        val reduced = fraction.reduced()
+        if (reduced.denominator == 0L) return "Error"
 
-        val magnitude = abs(value)
-        val plain = when {
-            magnitude < 1e-6 -> null
-            value == value.toLong().toDouble() && magnitude < 1e15 -> value.toLong().toString()
-            else -> "%.8f".format(value).trimEnd('0').trimEnd('.')
+        val sign = if (reduced.numerator < 0) "-" else ""
+        val whole = abs(reduced.numerator) / reduced.denominator
+        val remainder = abs(reduced.numerator) % reduced.denominator
+        val result = when {
+            remainder == 0L -> "$sign$whole"
+            whole == 0L -> "$sign$remainder/${reduced.denominator}"
+            else -> "$sign$whole-$remainder/${reduced.denominator}"
         }
-
-        return if (plain != null && plain.length <= MAX_DISPLAY_LENGTH) {
-            plain
-        } else {
-            "%.2e".format(value)
-        }
+        return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
     }
 }
 
-@InitialScreen
-class MainScreen(sealedActivity: SealedLightActivity) :
-    LightScreen<Unit, MainScreenViewModel>(sealedActivity) {
+class FractionCalcScreen(sealedActivity: SealedLightActivity) :
+    LightScreen<Unit, FractionCalcScreenViewModel>(sealedActivity) {
 
-    override val viewModelClass: Class<MainScreenViewModel>
-        get() = MainScreenViewModel::class.java
+    override val viewModelClass: Class<FractionCalcScreenViewModel>
+        get() = FractionCalcScreenViewModel::class.java
 
-    override fun createViewModel(): MainScreenViewModel = MainScreenViewModel()
+    override fun createViewModel(): FractionCalcScreenViewModel = FractionCalcScreenViewModel()
 
     @Composable
     override fun Content() {
@@ -219,7 +231,7 @@ class MainScreen(sealedActivity: SealedLightActivity) :
                     buttons = listOf(
                         CalculatorButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
                         CalculatorButton.Label("0") { viewModel.inputDigit("0") },
-                        CalculatorButton.Label(".", viewModel::inputDecimal),
+                        CalculatorButton.Label("/", viewModel::inputSlash),
                         CalculatorButton.Label("=", viewModel::equals),
                     ),
                 )
@@ -239,8 +251,8 @@ class MainScreen(sealedActivity: SealedLightActivity) :
             screenFactory = { OptionsScreen(it, toolOptions) },
             resultCallback = { key ->
                 when (key) {
-                    "standard" -> Unit
-                    "fraction-calc" -> navigateTo(screenFactory = { FractionCalcScreen(it) })
+                    "fraction-calc" -> Unit
+                    "standard" -> navigateTo(screenFactory = { MainScreen(it) })
                     else -> {
                         val label = toolOptions.first { it.key == key }.label
                         navigateTo(screenFactory = { UnimplementedScreen(it, "$label: not built yet.") })
@@ -258,9 +270,6 @@ private sealed interface CalculatorButton {
     data class Icon(val icon: LightIconConfiguration, override val onClick: () -> Unit) : CalculatorButton
 }
 
-// measured against the stock LightOS calculator screenshot: glyph height there is
-// ~1.196x LightTextVariant.Heading, and the column pitch is narrower than an even
-// screen-width/4 split, hence the custom style and gutter below instead of SDK presets.
 private val ButtonInset = 3.6f
 private val RightGutter = 2.3f
 private const val GridFontScale = 1.196f
@@ -282,8 +291,6 @@ private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifie
             .padding(end = RightGutter.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // weighted, so the number's own box can never grow into the icon's space,
-        // the icon below keeps a fixed size and position no matter what's here.
         Box(
             modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterEnd,
