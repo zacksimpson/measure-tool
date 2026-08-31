@@ -193,46 +193,46 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("C", onClick = viewModel::clear),
+                        FractionCalcButton.Label("C", onClick = viewModel::clear),
                         null,
-                        CalculatorButton.Label("±", onClick = viewModel::toggleSign),
-                        CalculatorButton.Label("÷") { viewModel.setOperator(Operator.DIVIDE) },
+                        FractionCalcButton.Label("±", onClick = viewModel::toggleSign),
+                        FractionCalcButton.Label("÷") { viewModel.setOperator(Operator.DIVIDE) },
                     ),
                 )
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("7") { viewModel.inputDigit("7") },
-                        CalculatorButton.Label("8") { viewModel.inputDigit("8") },
-                        CalculatorButton.Label("9") { viewModel.inputDigit("9") },
-                        CalculatorButton.Label("×") { viewModel.setOperator(Operator.MULTIPLY) },
+                        FractionCalcButton.Label("7") { viewModel.inputDigit("7") },
+                        FractionCalcButton.Label("8") { viewModel.inputDigit("8") },
+                        FractionCalcButton.Label("9") { viewModel.inputDigit("9") },
+                        FractionCalcButton.Label("×") { viewModel.setOperator(Operator.MULTIPLY) },
                     ),
                 )
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("4") { viewModel.inputDigit("4") },
-                        CalculatorButton.Label("5") { viewModel.inputDigit("5") },
-                        CalculatorButton.Label("6") { viewModel.inputDigit("6") },
-                        CalculatorButton.Label("-") { viewModel.setOperator(Operator.SUBTRACT) },
+                        FractionCalcButton.Label("4") { viewModel.inputDigit("4") },
+                        FractionCalcButton.Label("5") { viewModel.inputDigit("5") },
+                        FractionCalcButton.Label("6") { viewModel.inputDigit("6") },
+                        FractionCalcButton.Label("-") { viewModel.setOperator(Operator.SUBTRACT) },
                     ),
                 )
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("1") { viewModel.inputDigit("1") },
-                        CalculatorButton.Label("2") { viewModel.inputDigit("2") },
-                        CalculatorButton.Label("3") { viewModel.inputDigit("3") },
-                        CalculatorButton.Label("+") { viewModel.setOperator(Operator.ADD) },
+                        FractionCalcButton.Label("1") { viewModel.inputDigit("1") },
+                        FractionCalcButton.Label("2") { viewModel.inputDigit("2") },
+                        FractionCalcButton.Label("3") { viewModel.inputDigit("3") },
+                        FractionCalcButton.Label("+") { viewModel.setOperator(Operator.ADD) },
                     ),
                 )
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
-                        CalculatorButton.Label("0") { viewModel.inputDigit("0") },
-                        CalculatorButton.Label("/", scale = 0.85f, onClick = viewModel::inputSlash),
-                        CalculatorButton.Label("=", onClick = viewModel::equals),
+                        FractionCalcButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
+                        FractionCalcButton.Label("0") { viewModel.inputDigit("0") },
+                        FractionCalcButton.Label("/", scale = 0.85f, onClick = viewModel::inputSlash),
+                        FractionCalcButton.Label("=", onClick = viewModel::equals),
                     ),
                 )
             }
@@ -253,6 +253,7 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
                 when (key) {
                     "fraction-calc" -> Unit
                     "standard" -> navigateTo(screenFactory = { MainScreen(it) })
+                    "convert-units" -> navigateTo(screenFactory = { ConvertUnitsScreen(it) })
                     else -> {
                         val label = toolOptions.first { it.key == key }.label
                         navigateTo(screenFactory = { UnimplementedScreen(it, "$label: not built yet.") })
@@ -263,11 +264,11 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
     }
 }
 
-private sealed interface CalculatorButton {
+private sealed interface FractionCalcButton {
     val onClick: () -> Unit
 
-    data class Label(val text: String, val scale: Float = 1f, override val onClick: () -> Unit) : CalculatorButton
-    data class Icon(val icon: LightIconConfiguration, override val onClick: () -> Unit) : CalculatorButton
+    data class Label(val text: String, val scale: Float = 1f, override val onClick: () -> Unit) : FractionCalcButton
+    data class Icon(val icon: LightIconConfiguration, override val onClick: () -> Unit) : FractionCalcButton
 }
 
 private val ButtonInset = 3.6f
@@ -315,7 +316,7 @@ private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifie
 }
 
 @Composable
-private fun CalculatorRow(buttons: List<CalculatorButton?>, modifier: Modifier = Modifier) {
+private fun CalculatorRow(buttons: List<FractionCalcButton?>, modifier: Modifier = Modifier) {
     Row(modifier = modifier.fillMaxWidth().padding(end = RightGutter.gridUnitsAsDp())) {
         buttons.forEach { button ->
             Box(
@@ -326,7 +327,7 @@ private fun CalculatorRow(buttons: List<CalculatorButton?>, modifier: Modifier =
             ) {
                 when (button) {
                     null -> Unit
-                    is CalculatorButton.Label -> Text(
+                    is FractionCalcButton.Label -> Text(
                         text = button.text,
                         style = gridTextStyle(button.scale),
                         color = LightThemeTokens.colors.content,
@@ -334,7 +335,7 @@ private fun CalculatorRow(buttons: List<CalculatorButton?>, modifier: Modifier =
                             .padding(start = ButtonInset.gridUnitsAsDp())
                             .lightClickable(onClick = button.onClick),
                     )
-                    is CalculatorButton.Icon -> LightIcon(
+                    is FractionCalcButton.Icon -> LightIcon(
                         icon = button.icon,
                         size = 1.7f,
                         modifier = Modifier

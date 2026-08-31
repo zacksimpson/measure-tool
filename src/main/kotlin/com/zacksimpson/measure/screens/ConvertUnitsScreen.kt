@@ -1,4 +1,4 @@
-package com.zacksimpson.measure
+package com.zacksimpson.measure.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
-import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -28,42 +27,52 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.designVerticalPxToSp
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import com.zacksimpson.measure.screens.ConvertUnitsScreen
-import com.zacksimpson.measure.screens.FractionCalcScreen
-import com.zacksimpson.measure.screens.OptionsScreen
-import com.zacksimpson.measure.screens.UnimplementedScreen
-import com.zacksimpson.measure.screens.ViewOption
+import com.zacksimpson.measure.MainScreen
 import kotlin.math.abs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-// max characters (digits, sign, decimal point) the display will show before
-// switching to exponent notation, so a number can never overflow or wrap.
+// same grid, spacing, and type scale as MainScreen (copied, not shared, see
+// measure-tool's own notes on that choice). no arithmetic here, so the operator
+// slots become from/to unit pickers and a swap button instead.
 private const val MAX_DISPLAY_LENGTH = 10
 
-enum class Operator {
-    ADD,
-    SUBTRACT,
-    MULTIPLY,
-    DIVIDE;
-
-    fun apply(a: Double, b: Double): Double = when (this) {
-        ADD -> a + b
-        SUBTRACT -> a - b
-        MULTIPLY -> a * b
-        DIVIDE -> a / b
-    }
+enum class LengthUnit(val shortLabel: String, val fullName: String, val metersPerUnit: Double) {
+    INCH("in", "Inches", 0.0254),
+    FOOT("ft", "Feet", 0.3048),
+    YARD("yd", "Yards", 0.9144),
+    MILLIMETER("mm", "Millimeters", 0.001),
+    CENTIMETER("cm", "Centimeters", 0.01),
+    METER("m", "Meters", 1.0),
 }
 
-class MainScreenViewModel : LightViewModel<Unit>() {
+class ConvertUnitsScreenViewModel : LightViewModel<Unit>() {
 
-    private var accumulator: Double? = null
-    private var pendingOperator: Operator? = null
     private var startingNewEntry = true
 
     private val _display = MutableStateFlow("0")
     val display: StateFlow<String> = _display.asStateFlow()
+
+    private val _fromUnit = MutableStateFlow(LengthUnit.INCH)
+    val fromUnit: StateFlow<LengthUnit> = _fromUnit.asStateFlow()
+
+    private val _toUnit = MutableStateFlow(LengthUnit.FOOT)
+    val toUnit: StateFlow<LengthUnit> = _toUnit.asStateFlow()
+
+    fun setFromUnit(unit: LengthUnit) {
+        _fromUnit.value = unit
+    }
+
+    fun setToUnit(unit: LengthUnit) {
+        _toUnit.value = unit
+    }
+
+    fun swapUnits() {
+        val previousFrom = _fromUnit.value
+        _fromUnit.value = _toUnit.value
+        _toUnit.value = previousFrom
+    }
 
     fun inputDigit(digit: String) {
         val current = _display.value
@@ -88,50 +97,25 @@ class MainScreenViewModel : LightViewModel<Unit>() {
         }
     }
 
-    fun toggleSign() {
-        val current = _display.value
-        if (current == "0") return
-        val next = if (current.startsWith("-")) current.removePrefix("-") else "-$current"
-        if (next.length > MAX_DISPLAY_LENGTH) return
-        _display.value = next
-    }
-
     fun backspace() {
         if (_display.value == "Error") {
             clear()
             return
         }
         val trimmed = _display.value.dropLast(1)
-        _display.value = if (trimmed.isEmpty() || trimmed == "-") "0" else trimmed
+        _display.value = if (trimmed.isEmpty()) "0" else trimmed
         startingNewEntry = _display.value == "0"
     }
 
     fun clear() {
-        accumulator = null
-        pendingOperator = null
         startingNewEntry = true
         _display.value = "0"
     }
 
-    fun setOperator(operator: Operator) {
-        val current = _display.value.toDoubleOrNull() ?: 0.0
-        accumulator = if (pendingOperator != null && !startingNewEntry) {
-            pendingOperator!!.apply(accumulator ?: 0.0, current)
-        } else {
-            accumulator ?: current
-        }
-        pendingOperator = operator
-        startingNewEntry = true
-        _display.value = formatValue(accumulator ?: current)
-    }
-
-    fun equals() {
-        val operator = pendingOperator ?: return
-        val current = _display.value.toDoubleOrNull() ?: 0.0
-        val result = operator.apply(accumulator ?: 0.0, current)
-        _display.value = formatValue(result)
-        accumulator = null
-        pendingOperator = null
+    fun convert() {
+        val value = _display.value.toDoubleOrNull() ?: 0.0
+        val meters = value * _fromUnit.value.metersPerUnit
+        _display.value = formatValue(meters / _toUnit.value.metersPerUnit)
         startingNewEntry = true
     }
 
@@ -154,19 +138,22 @@ class MainScreenViewModel : LightViewModel<Unit>() {
     }
 }
 
-@InitialScreen
-class MainScreen(sealedActivity: SealedLightActivity) :
-    LightScreen<Unit, MainScreenViewModel>(sealedActivity) {
+class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
+    LightScreen<Unit, ConvertUnitsScreenViewModel>(sealedActivity) {
 
-    override val viewModelClass: Class<MainScreenViewModel>
-        get() = MainScreenViewModel::class.java
+    override val viewModelClass: Class<ConvertUnitsScreenViewModel>
+        get() = ConvertUnitsScreenViewModel::class.java
 
-    override fun createViewModel(): MainScreenViewModel = MainScreenViewModel()
+    override fun createViewModel(): ConvertUnitsScreenViewModel = ConvertUnitsScreenViewModel()
+
+    private val unitOptions = LengthUnit.entries.map { ViewOption(it.name, it.fullName) }
 
     @Composable
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val display by viewModel.display.collectAsState()
+        val fromUnit by viewModel.fromUnit.collectAsState()
+        val toUnit by viewModel.toUnit.collectAsState()
 
         LightTheme(colors = themeColors) {
             Column(
@@ -182,50 +169,64 @@ class MainScreen(sealedActivity: SealedLightActivity) :
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("C", viewModel::clear),
+                        ConvertUnitsButton.Label("C", onClick = viewModel::clear),
+                        ConvertUnitsButton.Icon(LightIcons.REVERSE_ORDER, onClick = viewModel::swapUnits),
+                        ConvertUnitsButton.Label(fromUnit.shortLabel, onClick = ::openFromPicker),
+                        ConvertUnitsButton.Label(toUnit.shortLabel, onClick = ::openToPicker),
+                    ),
+                )
+                CalculatorRow(
+                    modifier = Modifier.weight(1f),
+                    buttons = listOf(
+                        ConvertUnitsButton.Label("7") { viewModel.inputDigit("7") },
+                        ConvertUnitsButton.Label("8") { viewModel.inputDigit("8") },
+                        ConvertUnitsButton.Label("9") { viewModel.inputDigit("9") },
                         null,
-                        CalculatorButton.Label("±", viewModel::toggleSign),
-                        CalculatorButton.Label("÷") { viewModel.setOperator(Operator.DIVIDE) },
                     ),
                 )
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("7") { viewModel.inputDigit("7") },
-                        CalculatorButton.Label("8") { viewModel.inputDigit("8") },
-                        CalculatorButton.Label("9") { viewModel.inputDigit("9") },
-                        CalculatorButton.Label("×") { viewModel.setOperator(Operator.MULTIPLY) },
+                        ConvertUnitsButton.Label("4") { viewModel.inputDigit("4") },
+                        ConvertUnitsButton.Label("5") { viewModel.inputDigit("5") },
+                        ConvertUnitsButton.Label("6") { viewModel.inputDigit("6") },
+                        null,
                     ),
                 )
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("4") { viewModel.inputDigit("4") },
-                        CalculatorButton.Label("5") { viewModel.inputDigit("5") },
-                        CalculatorButton.Label("6") { viewModel.inputDigit("6") },
-                        CalculatorButton.Label("-") { viewModel.setOperator(Operator.SUBTRACT) },
+                        ConvertUnitsButton.Label("1") { viewModel.inputDigit("1") },
+                        ConvertUnitsButton.Label("2") { viewModel.inputDigit("2") },
+                        ConvertUnitsButton.Label("3") { viewModel.inputDigit("3") },
+                        null,
                     ),
                 )
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("1") { viewModel.inputDigit("1") },
-                        CalculatorButton.Label("2") { viewModel.inputDigit("2") },
-                        CalculatorButton.Label("3") { viewModel.inputDigit("3") },
-                        CalculatorButton.Label("+") { viewModel.setOperator(Operator.ADD) },
-                    ),
-                )
-                CalculatorRow(
-                    modifier = Modifier.weight(1f),
-                    buttons = listOf(
-                        CalculatorButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
-                        CalculatorButton.Label("0") { viewModel.inputDigit("0") },
-                        CalculatorButton.Label(".", viewModel::inputDecimal),
-                        CalculatorButton.Label("=", viewModel::equals),
+                        ConvertUnitsButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
+                        ConvertUnitsButton.Label("0") { viewModel.inputDigit("0") },
+                        ConvertUnitsButton.Label(".", onClick = viewModel::inputDecimal),
+                        ConvertUnitsButton.Label("=", onClick = viewModel::convert),
                     ),
                 )
             }
         }
+    }
+
+    private fun openFromPicker() {
+        navigateTo(
+            screenFactory = { OptionsScreen(it, unitOptions) },
+            resultCallback = { key -> viewModel.setFromUnit(LengthUnit.valueOf(key)) },
+        )
+    }
+
+    private fun openToPicker() {
+        navigateTo(
+            screenFactory = { OptionsScreen(it, unitOptions) },
+            resultCallback = { key -> viewModel.setToUnit(LengthUnit.valueOf(key)) },
+        )
     }
 
     private val toolOptions = listOf(
@@ -240,9 +241,9 @@ class MainScreen(sealedActivity: SealedLightActivity) :
             screenFactory = { OptionsScreen(it, toolOptions) },
             resultCallback = { key ->
                 when (key) {
-                    "standard" -> Unit
+                    "convert-units" -> Unit
+                    "standard" -> navigateTo(screenFactory = { MainScreen(it) })
                     "fraction-calc" -> navigateTo(screenFactory = { FractionCalcScreen(it) })
-                    "convert-units" -> navigateTo(screenFactory = { ConvertUnitsScreen(it) })
                     else -> {
                         val label = toolOptions.first { it.key == key }.label
                         navigateTo(screenFactory = { UnimplementedScreen(it, "$label: not built yet.") })
@@ -253,26 +254,24 @@ class MainScreen(sealedActivity: SealedLightActivity) :
     }
 }
 
-private sealed interface CalculatorButton {
+private sealed interface ConvertUnitsButton {
     val onClick: () -> Unit
 
-    data class Label(val text: String, override val onClick: () -> Unit) : CalculatorButton
-    data class Icon(val icon: LightIconConfiguration, override val onClick: () -> Unit) : CalculatorButton
+    data class Label(val text: String, val scale: Float = 1f, override val onClick: () -> Unit) : ConvertUnitsButton
+    data class Icon(val icon: LightIconConfiguration, override val onClick: () -> Unit) : ConvertUnitsButton
 }
 
-// measured against the stock LightOS calculator screenshot: glyph height there is
-// ~1.196x LightTextVariant.Heading, and the column pitch is narrower than an even
-// screen-width/4 split, hence the custom style and gutter below instead of SDK presets.
 private val ButtonInset = 3.6f
 private val RightGutter = 2.3f
 private const val GridFontScale = 1.196f
 
 @Composable
-private fun gridTextStyle(): TextStyle {
+private fun gridTextStyle(scale: Float = 1f): TextStyle {
     val base = LightThemeTokens.typography.heading
+    val factor = GridFontScale * scale
     return base.copy(
-        fontSize = (base.fontSize.value * GridFontScale).designVerticalPxToSp(),
-        lineHeight = (base.lineHeight.value * GridFontScale).designVerticalPxToSp(),
+        fontSize = (base.fontSize.value * factor).designVerticalPxToSp(),
+        lineHeight = (base.lineHeight.value * factor).designVerticalPxToSp(),
     )
 }
 
@@ -284,8 +283,6 @@ private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifie
             .padding(end = RightGutter.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // weighted, so the number's own box can never grow into the icon's space,
-        // the icon below keeps a fixed size and position no matter what's here.
         Box(
             modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterEnd,
@@ -309,7 +306,7 @@ private fun DisplayRow(value: String, onBackspace: () -> Unit, modifier: Modifie
 }
 
 @Composable
-private fun CalculatorRow(buttons: List<CalculatorButton?>, modifier: Modifier = Modifier) {
+private fun CalculatorRow(buttons: List<ConvertUnitsButton?>, modifier: Modifier = Modifier) {
     Row(modifier = modifier.fillMaxWidth().padding(end = RightGutter.gridUnitsAsDp())) {
         buttons.forEach { button ->
             Box(
@@ -320,15 +317,15 @@ private fun CalculatorRow(buttons: List<CalculatorButton?>, modifier: Modifier =
             ) {
                 when (button) {
                     null -> Unit
-                    is CalculatorButton.Label -> Text(
+                    is ConvertUnitsButton.Label -> Text(
                         text = button.text,
-                        style = gridTextStyle(),
+                        style = gridTextStyle(button.scale),
                         color = LightThemeTokens.colors.content,
                         modifier = Modifier
                             .padding(start = ButtonInset.gridUnitsAsDp())
                             .lightClickable(onClick = button.onClick),
                     )
-                    is CalculatorButton.Icon -> LightIcon(
+                    is ConvertUnitsButton.Icon -> LightIcon(
                         icon = button.icon,
                         size = 1.7f,
                         modifier = Modifier
