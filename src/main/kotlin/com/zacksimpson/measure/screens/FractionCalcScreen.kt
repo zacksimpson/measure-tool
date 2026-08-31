@@ -193,9 +193,9 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
                 CalculatorRow(
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
-                        CalculatorButton.Label("C", viewModel::clear),
+                        CalculatorButton.Label("C", onClick = viewModel::clear),
                         null,
-                        CalculatorButton.Label("±", viewModel::toggleSign),
+                        CalculatorButton.Label("±", onClick = viewModel::toggleSign),
                         CalculatorButton.Label("÷") { viewModel.setOperator(Operator.DIVIDE) },
                     ),
                 )
@@ -231,8 +231,8 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
                     buttons = listOf(
                         CalculatorButton.Icon(LightIcons.LIST, onClick = ::openToolsMenu),
                         CalculatorButton.Label("0") { viewModel.inputDigit("0") },
-                        CalculatorButton.Label("/", viewModel::inputSlash),
-                        CalculatorButton.Label("=", viewModel::equals),
+                        CalculatorButton.Label("/", scale = 0.85f, onClick = viewModel::inputSlash),
+                        CalculatorButton.Label("=", onClick = viewModel::equals),
                     ),
                 )
             }
@@ -266,7 +266,7 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
 private sealed interface CalculatorButton {
     val onClick: () -> Unit
 
-    data class Label(val text: String, override val onClick: () -> Unit) : CalculatorButton
+    data class Label(val text: String, val scale: Float = 1f, override val onClick: () -> Unit) : CalculatorButton
     data class Icon(val icon: LightIconConfiguration, override val onClick: () -> Unit) : CalculatorButton
 }
 
@@ -275,11 +275,12 @@ private val RightGutter = 2.3f
 private const val GridFontScale = 1.196f
 
 @Composable
-private fun gridTextStyle(): TextStyle {
+private fun gridTextStyle(scale: Float = 1f): TextStyle {
     val base = LightThemeTokens.typography.heading
+    val factor = GridFontScale * scale
     return base.copy(
-        fontSize = (base.fontSize.value * GridFontScale).designVerticalPxToSp(),
-        lineHeight = (base.lineHeight.value * GridFontScale).designVerticalPxToSp(),
+        fontSize = (base.fontSize.value * factor).designVerticalPxToSp(),
+        lineHeight = (base.lineHeight.value * factor).designVerticalPxToSp(),
     )
 }
 
@@ -327,7 +328,7 @@ private fun CalculatorRow(buttons: List<CalculatorButton?>, modifier: Modifier =
                     null -> Unit
                     is CalculatorButton.Label -> Text(
                         text = button.text,
-                        style = gridTextStyle(),
+                        style = gridTextStyle(button.scale),
                         color = LightThemeTokens.colors.content,
                         modifier = Modifier
                             .padding(start = ButtonInset.gridUnitsAsDp())
