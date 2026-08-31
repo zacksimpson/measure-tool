@@ -8,9 +8,8 @@ import com.zacksimpson.measure.MainScreen
 // routing never differs by which screen opened it.
 private val toolOptions = listOf(
     ViewOption("standard", "Standard"),
-    ViewOption("convert-units", "Convert Units"),
     ViewOption("fraction-calc", "Fraction Calc"),
-    ViewOption("angle-find", "Angle Find"),
+    ViewOption("convert-units", "Convert Units"),
     ViewOption("ruler", "Ruler"),
 )
 
