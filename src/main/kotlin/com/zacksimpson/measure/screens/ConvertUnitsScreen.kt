@@ -42,11 +42,18 @@ import kotlinx.coroutines.launch
 // slots become from/to unit pickers and a swap button instead.
 private const val MAX_DISPLAY_LENGTH = 10
 
-enum class LengthUnit(val shortLabel: String, val fullName: String, val metersPerUnit: Double) {
+enum class LengthUnit(
+    val shortLabel: String,
+    val fullName: String,
+    val metersPerUnit: Double,
+    // "mm" is two of the widest letters in the font, clips to "m" at the same
+    // scale everything else uses comfortably.
+    val labelScale: Float = 0.7f,
+) {
     INCH("in", "Inches", 0.0254),
     FOOT("ft", "Feet", 0.3048),
     YARD("yd", "Yards", 0.9144),
-    MILLIMETER("mm", "Millimeters", 0.001),
+    MILLIMETER("mm", "Millimeters", 0.001, labelScale = 0.6f),
     CENTIMETER("cm", "Centimeters", 0.01),
     METER("m", "Meters", 1.0),
 }
@@ -179,13 +186,13 @@ class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
                         ConvertUnitsButton.Label("C", onClick = viewModel::clear),
-                        ConvertUnitsButton.Label(fromUnit.shortLabel, scale = 0.7f, onClick = ::openFromPicker),
+                        ConvertUnitsButton.Label(fromUnit.shortLabel, scale = fromUnit.labelScale, onClick = ::openFromPicker),
                         ConvertUnitsButton.Icon(
                             LightIcons.REVERSE_ORDER,
                             rotationDegrees = 90f,
                             onClick = viewModel::swapUnits,
                         ),
-                        ConvertUnitsButton.Label(toUnit.shortLabel, scale = 0.7f, onClick = ::openToPicker),
+                        ConvertUnitsButton.Label(toUnit.shortLabel, scale = toUnit.labelScale, onClick = ::openToPicker),
                     ),
                 )
                 CalculatorRow(
