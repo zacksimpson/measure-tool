@@ -31,18 +31,7 @@ private const val TunedTopPaddingUnits = 6.5f
 private const val TunedBottomPaddingUnits = 4f
 private const val MaxItemSpacingUnits = 2.25f
 
-// same total padding budget as the tuned values, just split evenly, so a list
-// long enough to actually reach the bottom of the screen gets a balanced gap
-// on both ends instead of the top/bottom asymmetry above.
-private const val BalancedPaddingUnits = (TunedTopPaddingUnits + TunedBottomPaddingUnits) / 2f
-
 private const val ShortListMaxCount = 4
-
-private fun topPaddingUnits(itemCount: Int): Float =
-    if (itemCount <= ShortListMaxCount) TunedTopPaddingUnits else BalancedPaddingUnits
-
-private fun bottomPaddingUnits(itemCount: Int): Float =
-    if (itemCount <= ShortListMaxCount) TunedBottomPaddingUnits else BalancedPaddingUnits
 
 // one Heading-variant line's rendered height in grid units, measured off-device
 // (step between item centers at the tuned 2.25-unit spacing was ~4.575 units,
@@ -50,11 +39,27 @@ private fun bottomPaddingUnits(itemCount: Int): Float =
 private const val ItemHeightUnits = 2.35f
 private const val SafetyMarginUnits = 0.5f
 
-// no scrolling, ever: this never shows a list longer than one screen can hold,
-// so item spacing shrinks (down from the tuned 2.25 units) as the list grows,
-// rather than letting it overflow. LightGrid.HEIGHT is a width-based unit here
-// like everywhere else in this screen, valid because the LP3's fixed 1080x1240
-// resolution makes one width unit equal one height unit in px.
+// longer lists give up padding before they give up the tuned item spacing, so
+// every option list in the app reads with the same gap between rows regardless
+// of how many rows there are. splits whatever's left evenly top and bottom.
+// coerced to 0 rather than going negative, so a list long enough to eat the
+// entire budget just sits flush instead of overlapping itself.
+private fun paddingBudgetUnits(itemCount: Int): Float {
+    val contentHeight = itemCount * ItemHeightUnits + (itemCount - 1) * MaxItemSpacingUnits
+    return (LightGrid.HEIGHT - contentHeight - SafetyMarginUnits).coerceAtLeast(0f)
+}
+
+private fun topPaddingUnits(itemCount: Int): Float =
+    if (itemCount <= ShortListMaxCount) TunedTopPaddingUnits else paddingBudgetUnits(itemCount) / 2f
+
+private fun bottomPaddingUnits(itemCount: Int): Float =
+    if (itemCount <= ShortListMaxCount) TunedBottomPaddingUnits else paddingBudgetUnits(itemCount) / 2f
+
+// no scrolling, ever: this never shows a list longer than one screen can hold.
+// item spacing only shrinks below the tuned 2.25 units if a list ever grows long
+// enough that even zero padding wouldn't fit it otherwise. LightGrid.HEIGHT is a
+// width-based unit here like everywhere else in this screen, valid because the
+// LP3's fixed 1080x1240 resolution makes one width unit equal one height unit in px.
 private fun itemSpacingUnits(itemCount: Int): Float {
     if (itemCount <= 1) return MaxItemSpacingUnits
     val budget = LightGrid.HEIGHT - topPaddingUnits(itemCount) - bottomPaddingUnits(itemCount) - SafetyMarginUnits
