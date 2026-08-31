@@ -4,6 +4,8 @@ A handy multi-tool and construction calculator for taking measurements on the Li
 
 Built on the [Light SDK](https://github.com/lightphone/light-sdk).
 
+![hero image](/measure.png)
+
 ---
 
 ## Ways to Measure
