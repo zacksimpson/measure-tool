@@ -8,21 +8,23 @@ Built on the [Light SDK](https://github.com/lightphone/light-sdk).
 
 ## Ways to Measure
 
-* Standard Calculator, replicated pixel-for-pixel from the stock LightOS calculator
-* Fraction Calculator, with dedicated keys for fractions, mixed numbers and feet/inches entry
-* Unit Conversion, for length (inches, feet, yards, millimeters, centimeters, meters)
-* Ruler, turning the sides of the screen into metric and imperial rulers calibrated to the display's real physical pixel density
-* Long-press any result to copy it or view history of previous calculations
+* **Standard Calculator**, designed to resemble LightOS' Calculator tool as closely as possible
+* **Fraction Calculator**, with dedicated keys for fractions, mixed numbers and feet/inches entry
+* **Unit Conversion**, for length (inches, feet, yards, millimeters, centimeters, meters)
+* **Ruler**, turning the sides of the screen into metric and imperial rulers
+* Long-press the result to copy it or view history of previous calculations
 
 ---
 
 > [!WARNING]
-> The ruler is calibrated against the Light Phone III display's reported physical pixel density. If you've changed your Android display density settings, or if you are attempting to install this anywhere else, Ruler will likely not work at this point. (Also, nothing beats a good ole tape measure.) Treat this as a tool for quick reference, not a precision instrument for anything important!
+> The ruler is calibrated against the Light Phone III display's reported physical pixel density. If you've changed your Android display density settings, or if you are attempting to install this anywhere else, Ruler will likely not work at this point. (Also, nothing beats a good ole tape measure.) Treat this as a tool for quick reference, not for anything that requires extreme precision.
 
 ---
 
+## Local Setup
+
 <details>
-<summary>Local setup</summary>
+<summary>Building from source</summary>
 
 This module isn't a standalone Gradle build. It compiles as a subproject of a local `light-sdk`
 checkout, the same way other local Light SDK tools do.
