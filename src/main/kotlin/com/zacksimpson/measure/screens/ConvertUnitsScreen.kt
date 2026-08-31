@@ -179,13 +179,13 @@ class ConvertUnitsScreen(sealedActivity: SealedLightActivity) :
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
                         ConvertUnitsButton.Label("C", onClick = viewModel::clear),
-                        ConvertUnitsButton.Label(fromUnit.shortLabel, scale = 0.6f, onClick = ::openFromPicker),
+                        ConvertUnitsButton.Label(fromUnit.shortLabel, scale = 0.7f, onClick = ::openFromPicker),
                         ConvertUnitsButton.Icon(
                             LightIcons.REVERSE_ORDER,
                             rotationDegrees = 90f,
                             onClick = viewModel::swapUnits,
                         ),
-                        ConvertUnitsButton.Label(toUnit.shortLabel, scale = 0.6f, onClick = ::openToPicker),
+                        ConvertUnitsButton.Label(toUnit.shortLabel, scale = 0.7f, onClick = ::openToPicker),
                     ),
                 )
                 CalculatorRow(
