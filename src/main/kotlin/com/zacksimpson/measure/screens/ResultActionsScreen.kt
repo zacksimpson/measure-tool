@@ -26,11 +26,17 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import com.zacksimpson.measure.data.CalcHistoryRepository
 
-// long-press menu for a calculator's display: copy the current value, or see recent
-// results. fixed two-item menu with its own actions instead of a goBack(key) picker.
+// an extra, screen-specific action shown below copy/history, e.g. carpentry calc's
+// unit toggle. rare enough that a plain two-item menu isn't worth making generic for.
+data class ResultExtraAction(val label: String, val onClick: () -> Unit)
+
+// long-press menu for a calculator's display: copy the current value, see recent
+// results, or (optionally) one extra screen-specific action, instead of a
+// goBack(key) picker.
 class ResultActionsScreen(
     sealedActivity: SealedLightActivity,
     private val value: String,
+    private val extraAction: ResultExtraAction? = null,
 ) : SimpleLightScreen<Unit>(sealedActivity) {
 
     @Composable
@@ -65,6 +71,15 @@ class ResultActionsScreen(
                         text = "View History",
                         onClick = { navigateTo(screenFactory = { CalcHistoryScreen(it, history) }) },
                     )
+                    if (extraAction != null) {
+                        ActionRow(
+                            text = extraAction.label,
+                            onClick = {
+                                extraAction.onClick()
+                                goBack(Unit)
+                            },
+                        )
+                    }
                 }
                 LightBottomBar(
                     items = listOf(LightBarButton.LightIcon(icon = LightIcons.CLOSE, onClick = { goBack(Unit) })),
