@@ -11,10 +11,10 @@ Built on the [Light SDK](https://github.com/lightphone/light-sdk).
 ## Ways to Measure
 
 * **Standard Calculator**, designed to resemble LightOS' Calculator tool as closely as possible
-* **Fraction Calculator**, with dedicated keys for fractions, mixed numbers and feet/inches entry
+* **Carpentry Calculator**, for feet-and-inches math across length, area, and volume
+* **Fraction Calculator**, with dedicated keys for fractions and mixed numbers
 * **Unit Conversion**, for length (inches, feet, yards, millimeters, centimeters, meters)
 * **Ruler**, turning the sides of the screen into metric and imperial rulers
-* Long-press the result to copy it or view history of previous calculations
 
 ---
 
