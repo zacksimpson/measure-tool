@@ -18,7 +18,7 @@ Built on the [Light SDK](https://github.com/lightphone/light-sdk).
 
 ---
 
-> [!WARNING]
+> [!Note]
 > The ruler is calibrated against the Light Phone III display's default pixel density. If you've changed your Android display density settings, or if you are attempting to install this anywhere else, Ruler will likely not work at this point. (Also, nothing beats a good ole tape measure.) 
 
 ---
