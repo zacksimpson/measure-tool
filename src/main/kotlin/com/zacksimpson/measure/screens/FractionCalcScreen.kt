@@ -112,6 +112,9 @@ private fun renderEntryDisplay(raw: String): String {
 class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository) : LightViewModel<Unit>() {
 
     private var accumulator: Fraction? = null
+    // 1 = a length (default), 2 = an area, 3 = a volume, 0 = a unitless ratio.
+    // multiplying adds a dimension, dividing removes one, same as units do.
+    private var accumulatorDimension = 1
     private var pendingOperator: Operator? = null
     private var startingNewEntry = true
 
@@ -189,6 +192,7 @@ class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository
 
     fun clear() {
         accumulator = null
+        accumulatorDimension = 1
         pendingOperator = null
         startingNewEntry = true
         _display.value = "0"
@@ -196,22 +200,24 @@ class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository
 
     fun setOperator(operator: Operator) {
         val current = parseFraction(_display.value)
-        accumulator = if (pendingOperator != null && !startingNewEntry) {
-            pendingOperator!!.apply(accumulator ?: Fraction(0, 1), current)
+        if (pendingOperator != null && !startingNewEntry) {
+            accumulator = pendingOperator!!.apply(accumulator ?: Fraction(0, 1), current)
+            accumulatorDimension = dimensionAfter(pendingOperator!!, accumulatorDimension)
         } else {
-            accumulator ?: current
+            accumulator = accumulator ?: current
         }
         pendingOperator = operator
         startingNewEntry = true
-        _display.value = formatValue(accumulator ?: current)
+        _display.value = formatValue(accumulator ?: current, accumulatorDimension)
     }
 
     fun equals() {
         val operator = pendingOperator ?: return
         val current = parseFraction(_display.value)
         val result = operator.apply(accumulator ?: Fraction(0, 1), current)
-        _display.value = formatValue(result)
+        _display.value = formatValue(result, dimensionAfter(operator, accumulatorDimension))
         accumulator = null
+        accumulatorDimension = 1
         pendingOperator = null
         startingNewEntry = true
         if (_display.value != "Error") {
@@ -219,14 +225,51 @@ class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository
         }
     }
 
-    // fraction is total inches. folds into feet once >= 12 and always ends in a
-    // unit mark ("'" for a bare feet result, otherwise the inches mark """)
-    // so it's never ambiguous which unit a result is in.
-    private fun formatValue(fraction: Fraction): String {
+    // a typed entry is always a plain length (dimension 1), so multiplying or
+    // dividing by one always moves the accumulator's dimension by exactly one step.
+    private fun dimensionAfter(operator: Operator, dimension: Int): Int = when (operator) {
+        Operator.MULTIPLY -> dimension + 1
+        Operator.DIVIDE -> dimension - 1
+        Operator.ADD, Operator.SUBTRACT -> dimension
+    }
+
+    // fraction is always in raw inches for whatever dimension it's in (in, in^2,
+    // or in^3), never pre-converted, so a chain of multiplies/divides stays exact
+    // until this formats the final answer.
+    private fun formatValue(fraction: Fraction, dimension: Int = 1): String {
         val reduced = fraction.reduced()
         if (reduced.denominator == 0L) return "Error"
-
         val sign = if (reduced.numerator < 0) "-" else ""
+
+        // multiplying or dividing changes what the number measures (an area, a
+        // volume, or a plain ratio), so it can't be folded into feet-inches like a
+        // length can. scale it into square/cubic feet instead, or leave it bare.
+        if (dimension != 1) {
+            val perFoot = when (dimension) {
+                2 -> 144L
+                3 -> 1728L
+                else -> 1L
+            }
+            val suffix = when (dimension) {
+                2 -> " sf"
+                3 -> " cf"
+                else -> ""
+            }
+            val scaled = Fraction(reduced.numerator, reduced.denominator * perFoot).reduced()
+            if (scaled.denominator == 0L) return "Error"
+            val whole = abs(scaled.numerator) / scaled.denominator
+            val remainder = abs(scaled.numerator) % scaled.denominator
+            val result = when {
+                remainder == 0L -> "$sign$whole$suffix"
+                whole == 0L -> "$sign$remainder/${scaled.denominator}$suffix"
+                else -> "$sign$whole-$remainder/${scaled.denominator}$suffix"
+            }
+            return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
+        }
+
+        // dimension 1: a length. folds into feet once >= 12 and always ends in a
+        // unit mark ("'" for a bare feet result, otherwise the inches mark """)
+        // so it's never ambiguous which unit a result is in.
         val totalWhole = abs(reduced.numerator) / reduced.denominator
         val remainder = abs(reduced.numerator) % reduced.denominator
         val feet = totalWhole / 12
