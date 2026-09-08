@@ -241,28 +241,40 @@ class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository
         if (reduced.denominator == 0L) return "Error"
         val sign = if (reduced.numerator < 0) "-" else ""
 
-        // multiplying or dividing changes what the number measures (an area, a
-        // volume, or a plain ratio), so it can't be folded into feet-inches like a
-        // length can. scale it into square/cubic feet instead, or leave it bare.
-        if (dimension != 1) {
-            val perFoot = when (dimension) {
-                2 -> 144L
-                3 -> 1728L
-                else -> 1L
+        // dividing a length by a length is a plain ratio, not a measurement, so it
+        // never gets a unit at all.
+        if (dimension == 0) {
+            val whole = abs(reduced.numerator) / reduced.denominator
+            val remainder = abs(reduced.numerator) % reduced.denominator
+            val result = when {
+                remainder == 0L -> "$sign$whole"
+                whole == 0L -> "$sign$remainder/${reduced.denominator}"
+                else -> "$sign$whole-$remainder/${reduced.denominator}"
             }
-            val suffix = when (dimension) {
-                2 -> " sf"
-                3 -> " cf"
-                else -> ""
-            }
-            val scaled = Fraction(reduced.numerator, reduced.denominator * perFoot).reduced()
+            return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
+        }
+
+        // multiplying or dividing lengths gives an area or volume, in square/cubic
+        // inches, not a length, so it can't fold into feet-inches like one. same
+        // idea as the length case below though: stay in inches until there's
+        // enough of them to read better in feet, rather than always converting
+        // (12 x 8 with no feet involved shouldn't come back as a fraction of a
+        // square foot).
+        if (dimension == 2 || dimension == 3) {
+            val perFoot = if (dimension == 2) 144L else 1728L
+            val footUnit = if (dimension == 2) "sf" else "cf"
+            val inchUnit = if (dimension == 2) "si" else "ci"
+            val totalWhole = abs(reduced.numerator) / reduced.denominator
+            val useFeet = totalWhole >= perFoot
+            val scaled = if (useFeet) Fraction(reduced.numerator, reduced.denominator * perFoot).reduced() else reduced
             if (scaled.denominator == 0L) return "Error"
             val whole = abs(scaled.numerator) / scaled.denominator
-            val remainder = abs(scaled.numerator) % scaled.denominator
+            val scaledRemainder = abs(scaled.numerator) % scaled.denominator
+            val suffix = " " + if (useFeet) footUnit else inchUnit
             val result = when {
-                remainder == 0L -> "$sign$whole$suffix"
-                whole == 0L -> "$sign$remainder/${scaled.denominator}$suffix"
-                else -> "$sign$whole-$remainder/${scaled.denominator}$suffix"
+                scaledRemainder == 0L -> "$sign$whole$suffix"
+                whole == 0L -> "$sign$scaledRemainder/${scaled.denominator}$suffix"
+                else -> "$sign$whole-$scaledRemainder/${scaled.denominator}$suffix"
             }
             return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
         }
