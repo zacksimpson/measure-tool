@@ -1,0 +1,499 @@
+package com.zacksimpson.measure.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.viewModelScope
+import com.thelightphone.sdk.LightScreen
+import com.thelightphone.sdk.LightViewModel
+import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIconConfiguration
+import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightTheme
+import com.thelightphone.sdk.ui.LightThemeController
+import com.thelightphone.sdk.ui.LightThemeTokens
+import com.thelightphone.sdk.ui.designVerticalPxToSp
+import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
+import com.zacksimpson.measure.data.CalcHistoryRepository
+import kotlin.math.abs
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+// same grid, spacing, and type scale as the other calculators (copied rather than
+// shared, see measure-tool's own notes on that choice). unlike fraction calc, a
+// bare number here always means inches, feet and inches are the whole point of
+// this screen, so folding/unit labeling doesn't need any opt-in.
+private const val MAX_DISPLAY_LENGTH = 10
+
+// sticky for the app session, not saved anywhere, resets on relaunch. once you ask
+// to see a result in the raw unit (inches/sq in/cu in) instead of the folded feet
+// form, every result stays that way until you switch back.
+private object CarpentryUnitPreference {
+    var showRawUnit: Boolean = false
+}
+
+// entry is always in inches, with an optional leading feet part: a plain integer
+// ("12"), a simple fraction ("3/4"), a mixed number ("12,3/4", "," marking the
+// whole/numerator boundary, see inputMixedSeparator), any of those prefixed with
+// feet ("3'"), or "'" alone. all arithmetic happens in total inches.
+private fun parseInchesFraction(text: String): Fraction {
+    val commaIndex = text.indexOf(",")
+    val whole = if (commaIndex >= 0) text.substring(0, commaIndex).toLongOrNull() ?: 0L else 0L
+    val fractionPart = if (commaIndex >= 0) text.substring(commaIndex + 1) else text
+    val parts = fractionPart.split("/")
+    val numerator = parts.getOrNull(0)?.toLongOrNull() ?: 0L
+    val denominator = parts.getOrNull(1)?.toLongOrNull()?.takeIf { it != 0L } ?: 1L
+    return Fraction(whole * denominator + numerator, denominator)
+}
+
+private fun parseFraction(text: String): Fraction {
+    val negative = text.startsWith("-")
+    val body = text.removePrefix("-")
+    val feetIndex = body.indexOf("'")
+    val feet = if (feetIndex >= 0) body.substring(0, feetIndex).toLongOrNull() ?: 0L else 0L
+    val inches = parseInchesFraction(if (feetIndex >= 0) body.substring(feetIndex + 1) else body)
+    val totalNumerator = feet * 12 * inches.denominator + inches.numerator
+    return Fraction(if (negative) -totalNumerator else totalNumerator, inches.denominator)
+}
+
+// an empty (or "0") whole part is never meaningful (0 wholes + a fraction is just the
+// fraction), so drop it from what's shown while typing: "0,3/4" and "3',3/4" both
+// read as clean "3/4" / "3'3/4" instead of a stray leading/trailing "-".
+private fun renderEntryDisplay(raw: String): String {
+    val sign = if (raw.startsWith("-")) "-" else ""
+    val body = raw.removePrefix(sign)
+    val commaIndex = body.indexOf(",")
+    val withoutEmptyWhole = if (commaIndex < 0) {
+        body
+    } else {
+        val feetIndex = body.indexOf("'")
+        val wholeStart = if (feetIndex in 0 until commaIndex) feetIndex + 1 else 0
+        val whole = body.substring(wholeStart, commaIndex)
+        if (whole.isEmpty() || whole == "0") body.removeRange(wholeStart, commaIndex + 1) else body
+    }
+    val rendered = sign + withoutEmptyWhole.replace(",", "-")
+    return if (rendered.isEmpty() || rendered == "-") "0" else rendered
+}
+
+class CarpentryCalcScreenViewModel(private val historyRepo: CalcHistoryRepository) : LightViewModel<Unit>() {
+
+    private var accumulator: Fraction? = null
+    // 1 = a length (default), 2 = an area, 3 = a volume, 0 = a unitless ratio.
+    // multiplying adds a dimension, dividing removes one, same as units do.
+    private var accumulatorDimension = 1
+    private var pendingOperator: Operator? = null
+    private var startingNewEntry = true
+
+    // the last completed answer, kept around so the unit toggle can re-render it
+    // without redoing the calculation.
+    private var lastResult: Fraction? = null
+    private var lastResultDimension = 1
+
+    private val _display = MutableStateFlow("0")
+    val display: StateFlow<String> = _display.asStateFlow()
+
+    fun inputDigit(digit: String) {
+        val current = _display.value
+        val next = when {
+            startingNewEntry || current == "0" -> digit
+            else -> current + digit
+        }
+        if (next.length > MAX_DISPLAY_LENGTH) return
+        _display.value = next
+        startingNewEntry = false
+    }
+
+    fun inputSlash() {
+        if (startingNewEntry) {
+            _display.value = "0/"
+            startingNewEntry = false
+            return
+        }
+        if (_display.value.length >= MAX_DISPLAY_LENGTH) return
+        if (!_display.value.contains("/")) {
+            _display.value += "/"
+        }
+    }
+
+    // "fra": marks the boundary between the whole number and the numerator,
+    // e.g. "12" + fra + "3" + "/" + "4" builds "12,3/4" (twelve and three quarters).
+    fun inputMixedSeparator() {
+        if (startingNewEntry) {
+            _display.value = "0,"
+            startingNewEntry = false
+            return
+        }
+        if (_display.value.length >= MAX_DISPLAY_LENGTH) return
+        if (!_display.value.contains(",") && !_display.value.contains("/")) {
+            _display.value += ","
+        }
+    }
+
+    // "ft": marks the boundary between feet and inches, must come before any
+    // fraction markers, e.g. "3" + ft + "4" + fra + "1" + "/" + "2" builds "3'4,1/2".
+    fun inputFeetMarker() {
+        if (startingNewEntry) {
+            _display.value = "0'"
+            startingNewEntry = false
+            return
+        }
+        if (_display.value.length >= MAX_DISPLAY_LENGTH) return
+        if (!_display.value.contains("'") && !_display.value.contains(",") && !_display.value.contains("/")) {
+            _display.value += "'"
+        }
+    }
+
+    fun toggleSign() {
+        val current = _display.value
+        if (current == "0") return
+        val next = if (current.startsWith("-")) current.removePrefix("-") else "-$current"
+        if (next.length > MAX_DISPLAY_LENGTH) return
+        _display.value = next
+    }
+
+    fun backspace() {
+        if (_display.value == "Error") {
+            clear()
+            return
+        }
+        val trimmed = _display.value.dropLast(1)
+        _display.value = if (trimmed.isEmpty() || trimmed == "-") "0" else trimmed
+        startingNewEntry = _display.value == "0"
+    }
+
+    fun clear() {
+        accumulator = null
+        accumulatorDimension = 1
+        pendingOperator = null
+        startingNewEntry = true
+        _display.value = "0"
+    }
+
+    fun setOperator(operator: Operator) {
+        val current = parseFraction(_display.value)
+        if (pendingOperator != null && !startingNewEntry) {
+            accumulator = pendingOperator!!.apply(accumulator ?: Fraction(0, 1), current)
+            accumulatorDimension = dimensionAfter(pendingOperator!!, accumulatorDimension)
+        } else {
+            accumulator = accumulator ?: current
+        }
+        pendingOperator = operator
+        startingNewEntry = true
+        _display.value = formatValue(accumulator ?: current, accumulatorDimension)
+    }
+
+    fun equals() {
+        val operator = pendingOperator ?: return
+        val current = parseFraction(_display.value)
+        val result = operator.apply(accumulator ?: Fraction(0, 1), current)
+        val dimension = dimensionAfter(operator, accumulatorDimension)
+        lastResult = result
+        lastResultDimension = dimension
+        _display.value = formatValue(result, dimension)
+        accumulator = null
+        accumulatorDimension = 1
+        pendingOperator = null
+        startingNewEntry = true
+        if (_display.value != "Error") {
+            viewModelScope.launch { historyRepo.record(_display.value) }
+        }
+    }
+
+    // null when there's no completed result to toggle, or it's a unitless ratio
+    // with no unit to switch between.
+    fun unitToggleLabel(): String? {
+        val dimension = lastResultDimension.takeIf { lastResult != null } ?: return null
+        val (rawUnit, foldedUnit) = when (dimension) {
+            1 -> "Inches" to "Feet"
+            2 -> "Square Inches" to "Square Feet"
+            3 -> "Cubic Inches" to "Cubic Feet"
+            else -> return null
+        }
+        return "Show in " + if (CarpentryUnitPreference.showRawUnit) foldedUnit else rawUnit
+    }
+
+    // re-renders the last completed result in the other unit, sticky for the rest
+    // of the session.
+    fun toggleRawUnit() {
+        CarpentryUnitPreference.showRawUnit = !CarpentryUnitPreference.showRawUnit
+        val result = lastResult ?: return
+        _display.value = formatValue(result, lastResultDimension)
+    }
+
+    // a typed entry is always a plain length (dimension 1), so multiplying or
+    // dividing by one always moves the accumulator's dimension by exactly one step.
+    private fun dimensionAfter(operator: Operator, dimension: Int): Int = when (operator) {
+        Operator.MULTIPLY -> dimension + 1
+        Operator.DIVIDE -> dimension - 1
+        Operator.ADD, Operator.SUBTRACT -> dimension
+    }
+
+    // fraction is always in raw inches for whatever dimension it's in (in, in^2,
+    // or in^3), never pre-converted, so a chain of multiplies/divides stays exact
+    // until this formats the final answer.
+    private fun formatValue(fraction: Fraction, dimension: Int = 1): String {
+        val reduced = fraction.reduced()
+        if (reduced.denominator == 0L) return "Error"
+        val sign = if (reduced.numerator < 0) "-" else ""
+
+        // dividing a length by a length is a plain ratio, not a measurement, so it
+        // never gets a unit at all.
+        if (dimension == 0) {
+            val whole = abs(reduced.numerator) / reduced.denominator
+            val remainder = abs(reduced.numerator) % reduced.denominator
+            val result = when {
+                remainder == 0L -> "$sign$whole"
+                whole == 0L -> "$sign$remainder/${reduced.denominator}"
+                else -> "$sign$whole-$remainder/${reduced.denominator}"
+            }
+            return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
+        }
+
+        // multiplying or dividing lengths gives an area or volume, in square/cubic
+        // inches, not a length, so it can't fold into feet-inches like one. same
+        // idea as the length case below though: stay in inches until there's
+        // enough of them to read better in feet, rather than always converting
+        // (12 x 8 with no feet involved shouldn't come back as a fraction of a
+        // square foot).
+        if (dimension == 2 || dimension == 3) {
+            val perFoot = if (dimension == 2) 144L else 1728L
+            val footUnit = if (dimension == 2) "ft²" else "ft³"
+            val inchUnit = if (dimension == 2) "in²" else "in³"
+            val totalWhole = abs(reduced.numerator) / reduced.denominator
+            val useFeet = !CarpentryUnitPreference.showRawUnit && totalWhole >= perFoot
+            val scaled = if (useFeet) Fraction(reduced.numerator, reduced.denominator * perFoot).reduced() else reduced
+            if (scaled.denominator == 0L) return "Error"
+            val whole = abs(scaled.numerator) / scaled.denominator
+            val scaledRemainder = abs(scaled.numerator) % scaled.denominator
+            val suffix = " " + if (useFeet) footUnit else inchUnit
+            val result = when {
+                scaledRemainder == 0L -> "$sign$whole$suffix"
+                whole == 0L -> "$sign$scaledRemainder/${scaled.denominator}$suffix"
+                else -> "$sign$whole-$scaledRemainder/${scaled.denominator}$suffix"
+            }
+            return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
+        }
+
+        // dimension 1: a length. folds into feet once >= 12 and always ends in a
+        // unit mark ("'" for a bare feet result, otherwise the inches mark """)
+        // so it's never ambiguous which unit a result is in.
+        val totalWhole = abs(reduced.numerator) / reduced.denominator
+        val remainder = abs(reduced.numerator) % reduced.denominator
+        val feet = if (CarpentryUnitPreference.showRawUnit) 0L else totalWhole / 12
+        val inchesWhole = if (feet > 0) totalWhole % 12 else totalWhole
+        val feetPrefix = if (feet > 0) "$feet'" else ""
+
+        val result = when {
+            remainder == 0L && inchesWhole == 0L && feet > 0 -> "$sign$feetPrefix"
+            remainder == 0L -> "$sign$feetPrefix$inchesWhole\""
+            inchesWhole == 0L -> "$sign$feetPrefix$remainder/${reduced.denominator}\""
+            else -> "$sign$feetPrefix$inchesWhole-$remainder/${reduced.denominator}\""
+        }
+        return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
+    }
+}
+
+class CarpentryCalcScreen(sealedActivity: SealedLightActivity) :
+    LightScreen<Unit, CarpentryCalcScreenViewModel>(sealedActivity) {
+
+    override val viewModelClass: Class<CarpentryCalcScreenViewModel>
+        get() = CarpentryCalcScreenViewModel::class.java
+
+    override fun createViewModel(): CarpentryCalcScreenViewModel =
+        CarpentryCalcScreenViewModel(CalcHistoryRepository(lightContext.dataStore))
+
+    @Composable
+    override fun Content() {
+        val themeColors by LightThemeController.colors.collectAsState()
+        val display by viewModel.display.collectAsState()
+
+        LightTheme(colors = themeColors) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(LightThemeTokens.colors.background),
+            ) {
+                DisplayRow(
+                    value = renderEntryDisplay(display),
+                    onBackspace = viewModel::backspace,
+                    onLongPress = {
+                        val toggleLabel = viewModel.unitToggleLabel()
+                        navigateTo(
+                            screenFactory = {
+                                ResultActionsScreen(
+                                    it,
+                                    renderEntryDisplay(display),
+                                    extraAction = toggleLabel?.let { label ->
+                                        ResultExtraAction(label, onClick = viewModel::toggleRawUnit)
+                                    },
+                                )
+                            },
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                CalculatorRow(
+                    modifier = Modifier.weight(1f),
+                    buttons = listOf(
+                        CarpentryCalcButton.Label("C", onClick = viewModel::clear),
+                        CarpentryCalcButton.Label("ft", scale = 0.7f, onClick = viewModel::inputFeetMarker),
+                        CarpentryCalcButton.Label("±", onClick = viewModel::toggleSign),
+                        CarpentryCalcButton.Label("÷") { viewModel.setOperator(Operator.DIVIDE) },
+                    ),
+                )
+                CalculatorRow(
+                    modifier = Modifier.weight(1f),
+                    buttons = listOf(
+                        CarpentryCalcButton.Label("7") { viewModel.inputDigit("7") },
+                        CarpentryCalcButton.Label("8") { viewModel.inputDigit("8") },
+                        CarpentryCalcButton.Label("9") { viewModel.inputDigit("9") },
+                        CarpentryCalcButton.Label("×") { viewModel.setOperator(Operator.MULTIPLY) },
+                    ),
+                )
+                CalculatorRow(
+                    modifier = Modifier.weight(1f),
+                    buttons = listOf(
+                        CarpentryCalcButton.Label("4") { viewModel.inputDigit("4") },
+                        CarpentryCalcButton.Label("5") { viewModel.inputDigit("5") },
+                        CarpentryCalcButton.Label("6") { viewModel.inputDigit("6") },
+                        CarpentryCalcButton.Label("-") { viewModel.setOperator(Operator.SUBTRACT) },
+                    ),
+                )
+                CalculatorRow(
+                    modifier = Modifier.weight(1f),
+                    buttons = listOf(
+                        CarpentryCalcButton.Label("1") { viewModel.inputDigit("1") },
+                        CarpentryCalcButton.Label("2") { viewModel.inputDigit("2") },
+                        CarpentryCalcButton.Label("3") { viewModel.inputDigit("3") },
+                        CarpentryCalcButton.Label("+") { viewModel.setOperator(Operator.ADD) },
+                    ),
+                )
+                // "fra"/"/" share one key: it reads "fra" until the whole/numerator
+                // marker has been placed, then relabels to "/" for the numerator/
+                // denominator split, then reverts once a new entry starts.
+                val fraSlashShowsSlash = display.contains(",")
+                CalculatorRow(
+                    modifier = Modifier.weight(1f),
+                    buttons = listOf(
+                        CarpentryCalcButton.Icon(LightIcons.LIST, onClick = { openToolsMenu("carpentry-calc") }),
+                        CarpentryCalcButton.Label("0") { viewModel.inputDigit("0") },
+                        CarpentryCalcButton.Label(
+                            text = if (fraSlashShowsSlash) "/" else "fra",
+                            scale = if (fraSlashShowsSlash) 0.85f else 0.7f,
+                            onClick = if (fraSlashShowsSlash) viewModel::inputSlash else viewModel::inputMixedSeparator,
+                        ),
+                        CarpentryCalcButton.Label("=", onClick = viewModel::equals),
+                    ),
+                )
+            }
+        }
+    }
+}
+
+private sealed interface CarpentryCalcButton {
+    val onClick: () -> Unit
+
+    data class Label(val text: String, val scale: Float = 1f, override val onClick: () -> Unit) : CarpentryCalcButton
+    data class Icon(val icon: LightIconConfiguration, override val onClick: () -> Unit) : CarpentryCalcButton
+}
+
+private val ButtonInset = 3.6f
+private val RightGutter = 2.3f
+private const val GridFontScale = 1.196f
+
+@Composable
+private fun gridTextStyle(scale: Float = 1f): TextStyle {
+    val base = LightThemeTokens.typography.heading
+    val factor = GridFontScale * scale
+    return base.copy(
+        fontSize = (base.fontSize.value * factor).designVerticalPxToSp(),
+        lineHeight = (base.lineHeight.value * factor).designVerticalPxToSp(),
+    )
+}
+
+@Composable
+private fun DisplayRow(
+    value: String,
+    onBackspace: () -> Unit,
+    onLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(end = RightGutter.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .combinedClickable(onClick = {}, onLongClick = onLongPress),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            Text(
+                text = value,
+                style = gridTextStyle(),
+                color = LightThemeTokens.colors.content,
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+            )
+        }
+        LightIcon(
+            icon = LightIcons.BACK,
+            size = 1.9f,
+            modifier = Modifier
+                .padding(start = 0.5f.gridUnitsAsDp())
+                .lightClickable(onClick = onBackspace),
+        )
+    }
+}
+
+@Composable
+private fun CalculatorRow(buttons: List<CarpentryCalcButton?>, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.fillMaxWidth().padding(end = RightGutter.gridUnitsAsDp())) {
+        buttons.forEach { button ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxSize(),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                when (button) {
+                    null -> Unit
+                    is CarpentryCalcButton.Label -> Text(
+                        text = button.text,
+                        style = gridTextStyle(button.scale),
+                        color = LightThemeTokens.colors.content,
+                        modifier = Modifier
+                            .padding(start = ButtonInset.gridUnitsAsDp())
+                            .lightClickable(onClick = button.onClick),
+                    )
+                    is CarpentryCalcButton.Icon -> LightIcon(
+                        icon = button.icon,
+                        size = 1.7f,
+                        modifier = Modifier
+                            .padding(start = ButtonInset.gridUnitsAsDp())
+                            .lightClickable(onClick = button.onClick),
+                    )
+                }
+            }
+        }
+    }
+}

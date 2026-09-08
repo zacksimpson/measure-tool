@@ -9,6 +9,7 @@ import com.zacksimpson.measure.MainScreen
 private val toolOptions = listOf(
     ViewOption("standard", "Standard"),
     ViewOption("fraction-calc", "Fraction Calc"),
+    ViewOption("carpentry-calc", "Carpentry Calc"),
     ViewOption("convert-units", "Convert Units"),
     ViewOption("ruler", "Ruler"),
 )
@@ -23,6 +24,7 @@ fun SimpleLightScreen<*>.openToolsMenu(currentKey: String) {
             when (key) {
                 "standard" -> navigateTo(screenFactory = { MainScreen(it) })
                 "fraction-calc" -> navigateTo(screenFactory = { FractionCalcScreen(it) })
+                "carpentry-calc" -> navigateTo(screenFactory = { CarpentryCalcScreen(it) })
                 "convert-units" -> navigateTo(screenFactory = { ConvertUnitsScreen(it) })
                 "ruler" -> navigateTo(screenFactory = { RulerScreen(it) })
                 else -> {

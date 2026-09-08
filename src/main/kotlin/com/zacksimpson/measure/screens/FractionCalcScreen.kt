@@ -36,63 +36,30 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-// same grid, spacing, and type scale as MainScreen (copied rather than shared, see
-// measure-tool's own notes on that choice), with "/" swapping in for "." and the
-// arithmetic operating on fractions instead of doubles.
+// same grid, spacing, and type scale as the other calculators (copied rather than
+// shared, see measure-tool's own notes on that choice), with "/" swapping in for
+// "." and the arithmetic operating on fractions instead of doubles. plain fraction
+// math only, no units assumed, see carpentry calc for feet/inches.
 private const val MAX_DISPLAY_LENGTH = 10
 
-data class Fraction(val numerator: Long, val denominator: Long) {
-    fun reduced(): Fraction {
-        if (numerator == 0L) return Fraction(0, 1)
-        val g = gcd(abs(numerator), abs(denominator))
-        val sign = if (denominator < 0) -1 else 1
-        return Fraction(sign * numerator / g, sign * denominator / g)
-    }
-}
-
-private fun gcd(a: Long, b: Long): Long = if (b == 0L) a else gcd(b, a % b)
-
-enum class Operator {
-    ADD,
-    SUBTRACT,
-    MULTIPLY,
-    DIVIDE;
-
-    fun apply(a: Fraction, b: Fraction): Fraction = when (this) {
-        ADD -> Fraction(a.numerator * b.denominator + b.numerator * a.denominator, a.denominator * b.denominator)
-        SUBTRACT -> Fraction(a.numerator * b.denominator - b.numerator * a.denominator, a.denominator * b.denominator)
-        MULTIPLY -> Fraction(a.numerator * b.numerator, a.denominator * b.denominator)
-        DIVIDE -> Fraction(a.numerator * b.denominator, a.denominator * b.numerator)
-    }.reduced()
-}
-
-// entry is always in inches, with an optional leading feet part: a plain integer
-// ("12"), a simple fraction ("3/4"), a mixed number ("12,3/4", "," marking the
-// whole/numerator boundary, see inputMixedSeparator), any of those prefixed with
-// feet ("3'"), or "'" alone. all arithmetic happens in total inches.
-private fun parseInchesFraction(text: String): Fraction {
-    val commaIndex = text.indexOf(",")
-    val whole = if (commaIndex >= 0) text.substring(0, commaIndex).toLongOrNull() ?: 0L else 0L
-    val fractionPart = if (commaIndex >= 0) text.substring(commaIndex + 1) else text
-    val parts = fractionPart.split("/")
-    val numerator = parts.getOrNull(0)?.toLongOrNull() ?: 0L
-    val denominator = parts.getOrNull(1)?.toLongOrNull()?.takeIf { it != 0L } ?: 1L
-    return Fraction(whole * denominator + numerator, denominator)
-}
-
+// a plain integer ("12"), a simple fraction ("3/4"), or a mixed number ("12,3/4",
+// "," marking the whole/numerator boundary, see inputMixedSeparator).
 private fun parseFraction(text: String): Fraction {
     val negative = text.startsWith("-")
     val body = text.removePrefix("-")
-    val feetIndex = body.indexOf("'")
-    val feet = if (feetIndex >= 0) body.substring(0, feetIndex).toLongOrNull() ?: 0L else 0L
-    val inches = parseInchesFraction(if (feetIndex >= 0) body.substring(feetIndex + 1) else body)
-    val totalNumerator = feet * 12 * inches.denominator + inches.numerator
-    return Fraction(if (negative) -totalNumerator else totalNumerator, inches.denominator)
+    val commaIndex = body.indexOf(",")
+    val whole = if (commaIndex >= 0) body.substring(0, commaIndex).toLongOrNull() ?: 0L else 0L
+    val fractionPart = if (commaIndex >= 0) body.substring(commaIndex + 1) else body
+    val parts = fractionPart.split("/")
+    val numerator = parts.getOrNull(0)?.toLongOrNull() ?: 0L
+    val denominator = parts.getOrNull(1)?.toLongOrNull()?.takeIf { it != 0L } ?: 1L
+    val signedNumerator = whole * denominator + numerator
+    return Fraction(if (negative) -signedNumerator else signedNumerator, denominator)
 }
 
 // an empty (or "0") whole part is never meaningful (0 wholes + a fraction is just the
-// fraction), so drop it from what's shown while typing: "0,3/4" and "3',3/4" both
-// read as clean "3/4" / "3'3/4" instead of a stray leading/trailing "-".
+// fraction), so drop it from what's shown while typing: "0,3/4" reads as clean "3/4"
+// instead of a stray leading "-".
 private fun renderEntryDisplay(raw: String): String {
     val sign = if (raw.startsWith("-")) "-" else ""
     val body = raw.removePrefix(sign)
@@ -100,10 +67,8 @@ private fun renderEntryDisplay(raw: String): String {
     val withoutEmptyWhole = if (commaIndex < 0) {
         body
     } else {
-        val feetIndex = body.indexOf("'")
-        val wholeStart = if (feetIndex in 0 until commaIndex) feetIndex + 1 else 0
-        val whole = body.substring(wholeStart, commaIndex)
-        if (whole.isEmpty() || whole == "0") body.removeRange(wholeStart, commaIndex + 1) else body
+        val whole = body.substring(0, commaIndex)
+        if (whole.isEmpty() || whole == "0") body.removeRange(0, commaIndex + 1) else body
     }
     val rendered = sign + withoutEmptyWhole.replace(",", "-")
     return if (rendered.isEmpty() || rendered == "-") "0" else rendered
@@ -152,20 +117,6 @@ class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository
         if (_display.value.length >= MAX_DISPLAY_LENGTH) return
         if (!_display.value.contains(",") && !_display.value.contains("/")) {
             _display.value += ","
-        }
-    }
-
-    // "ft": marks the boundary between feet and inches, must come before any
-    // fraction markers, e.g. "3" + ft + "4" + fra + "1" + "/" + "2" builds "3'4,1/2".
-    fun inputFeetMarker() {
-        if (startingNewEntry) {
-            _display.value = "0'"
-            startingNewEntry = false
-            return
-        }
-        if (_display.value.length >= MAX_DISPLAY_LENGTH) return
-        if (!_display.value.contains("'") && !_display.value.contains(",") && !_display.value.contains("/")) {
-            _display.value += "'"
         }
     }
 
@@ -219,25 +170,17 @@ class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository
         }
     }
 
-    // fraction is total inches. folds into feet once >= 12 and always ends in a
-    // unit mark ("'" for a bare feet result, otherwise the inches mark """)
-    // so it's never ambiguous which unit a result is in.
     private fun formatValue(fraction: Fraction): String {
         val reduced = fraction.reduced()
         if (reduced.denominator == 0L) return "Error"
 
         val sign = if (reduced.numerator < 0) "-" else ""
-        val totalWhole = abs(reduced.numerator) / reduced.denominator
+        val whole = abs(reduced.numerator) / reduced.denominator
         val remainder = abs(reduced.numerator) % reduced.denominator
-        val feet = totalWhole / 12
-        val inchesWhole = if (feet > 0) totalWhole % 12 else totalWhole
-        val feetPrefix = if (feet > 0) "$feet'" else ""
-
         val result = when {
-            remainder == 0L && inchesWhole == 0L && feet > 0 -> "$sign$feetPrefix"
-            remainder == 0L -> "$sign$feetPrefix$inchesWhole\""
-            inchesWhole == 0L -> "$sign$feetPrefix$remainder/${reduced.denominator}\""
-            else -> "$sign$feetPrefix$inchesWhole-$remainder/${reduced.denominator}\""
+            remainder == 0L -> "$sign$whole"
+            whole == 0L -> "$sign$remainder/${reduced.denominator}"
+            else -> "$sign$whole-$remainder/${reduced.denominator}"
         }
         return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
     }
@@ -275,7 +218,7 @@ class FractionCalcScreen(sealedActivity: SealedLightActivity) :
                     modifier = Modifier.weight(1f),
                     buttons = listOf(
                         FractionCalcButton.Label("C", onClick = viewModel::clear),
-                        FractionCalcButton.Label("ft", scale = 0.7f, onClick = viewModel::inputFeetMarker),
+                        null,
                         FractionCalcButton.Label("±", onClick = viewModel::toggleSign),
                         FractionCalcButton.Label("÷") { viewModel.setOperator(Operator.DIVIDE) },
                     ),
