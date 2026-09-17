@@ -88,8 +88,15 @@ private fun renderEntryDisplay(raw: String): String {
         val whole = body.substring(wholeStart, commaIndex)
         if (whole.isEmpty() || whole == "0") body.removeRange(wholeStart, commaIndex + 1) else body
     }
-    val rendered = sign + withoutEmptyWhole.replace(",", "-")
-    return if (rendered.isEmpty() || rendered == "-") "0" else rendered
+    if (withoutEmptyWhole.isEmpty()) return "0"
+    val newCommaIndex = withoutEmptyWhole.indexOf(",")
+    if (newCommaIndex < 0) {
+        val rendered = sign + withoutEmptyWhole
+        return if (rendered == "-") "0" else applyFractionGlyphs(rendered)
+    }
+    val whole = withoutEmptyWhole.substring(0, newCommaIndex)
+    val fractionPart = applyFractionGlyphs(withoutEmptyWhole.substring(newCommaIndex + 1))
+    return sign + joinMixedNumber(whole, fractionPart)
 }
 
 class CarpentryCalcScreenViewModel(private val historyRepo: CalcHistoryRepository) : LightViewModel<Unit>() {
@@ -260,8 +267,8 @@ class CarpentryCalcScreenViewModel(private val historyRepo: CalcHistoryRepositor
             val remainder = abs(reduced.numerator) % reduced.denominator
             val result = when {
                 remainder == 0L -> "$sign$whole"
-                whole == 0L -> "$sign$remainder/${reduced.denominator}"
-                else -> "$sign$whole-$remainder/${reduced.denominator}"
+                whole == 0L -> "$sign${fractionGlyph(remainder, reduced.denominator)}"
+                else -> "$sign${joinMixedNumber(whole.toString(), fractionGlyph(remainder, reduced.denominator))}"
             }
             return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
         }
@@ -285,8 +292,8 @@ class CarpentryCalcScreenViewModel(private val historyRepo: CalcHistoryRepositor
             val suffix = " " + if (useFeet) footUnit else inchUnit
             val result = when {
                 scaledRemainder == 0L -> "$sign$whole$suffix"
-                whole == 0L -> "$sign$scaledRemainder/${scaled.denominator}$suffix"
-                else -> "$sign$whole-$scaledRemainder/${scaled.denominator}$suffix"
+                whole == 0L -> "$sign${fractionGlyph(scaledRemainder, scaled.denominator)}$suffix"
+                else -> "$sign${joinMixedNumber(whole.toString(), fractionGlyph(scaledRemainder, scaled.denominator))}$suffix"
             }
             return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
         }
@@ -303,8 +310,8 @@ class CarpentryCalcScreenViewModel(private val historyRepo: CalcHistoryRepositor
         val result = when {
             remainder == 0L && inchesWhole == 0L && feet > 0 -> "$sign$feetPrefix"
             remainder == 0L -> "$sign$feetPrefix$inchesWhole\""
-            inchesWhole == 0L -> "$sign$feetPrefix$remainder/${reduced.denominator}\""
-            else -> "$sign$feetPrefix$inchesWhole-$remainder/${reduced.denominator}\""
+            inchesWhole == 0L -> "$sign$feetPrefix${fractionGlyph(remainder, reduced.denominator)}\""
+            else -> "$sign${joinMixedNumber("$feetPrefix$inchesWhole", fractionGlyph(remainder, reduced.denominator))}\""
         }
         return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
     }

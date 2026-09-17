@@ -70,8 +70,15 @@ private fun renderEntryDisplay(raw: String): String {
         val whole = body.substring(0, commaIndex)
         if (whole.isEmpty() || whole == "0") body.removeRange(0, commaIndex + 1) else body
     }
-    val rendered = sign + withoutEmptyWhole.replace(",", "-")
-    return if (rendered.isEmpty() || rendered == "-") "0" else rendered
+    if (withoutEmptyWhole.isEmpty()) return "0"
+    val newCommaIndex = withoutEmptyWhole.indexOf(",")
+    if (newCommaIndex < 0) {
+        val rendered = sign + withoutEmptyWhole
+        return if (rendered == "-") "0" else applyFractionGlyphs(rendered)
+    }
+    val whole = withoutEmptyWhole.substring(0, newCommaIndex)
+    val fractionPart = applyFractionGlyphs(withoutEmptyWhole.substring(newCommaIndex + 1))
+    return sign + joinMixedNumber(whole, fractionPart)
 }
 
 class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository) : LightViewModel<Unit>() {
@@ -179,8 +186,8 @@ class FractionCalcScreenViewModel(private val historyRepo: CalcHistoryRepository
         val remainder = abs(reduced.numerator) % reduced.denominator
         val result = when {
             remainder == 0L -> "$sign$whole"
-            whole == 0L -> "$sign$remainder/${reduced.denominator}"
-            else -> "$sign$whole-$remainder/${reduced.denominator}"
+            whole == 0L -> "$sign${fractionGlyph(remainder, reduced.denominator)}"
+            else -> "$sign${joinMixedNumber(whole.toString(), fractionGlyph(remainder, reduced.denominator))}"
         }
         return if (result.length <= MAX_DISPLAY_LENGTH) result else "Error"
     }
